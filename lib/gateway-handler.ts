@@ -78,7 +78,7 @@ async function checkQuota(userId: number, estimatedTokens: number): Promise<
 
   if (!user) return { ok: false, reason: "User does not exist." };
 
-  const limits = await getEffectiveLimits(user as any);
+  const limits = await getEffectiveLimits(user);
   const quota: QuotaInfo = {
     remaining_requests: limits.quota_requests !== null ? Math.max(0, limits.quota_requests - user.used_requests) : null,
     remaining_tokens: limits.quota_tokens !== null ? Math.max(0, limits.quota_tokens - user.used_tokens) : null,

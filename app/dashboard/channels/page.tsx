@@ -194,6 +194,7 @@ export default function AdminChannelsPage() {
   }
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Initial load synchronizes page state with the API.
     void load();
   }, [router]);
 

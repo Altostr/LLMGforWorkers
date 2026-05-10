@@ -1,5 +1,7 @@
 import { gatewayDb, type DbGroup, type DbUser } from "@/lib/db";
 
+export type LimitSource = Pick<DbUser, "group_id" | "qps" | "rpm" | "tpm" | "quota_requests" | "quota_tokens">;
+
 export type EffectiveLimits = {
   qps: number;
   rpm: number;
@@ -29,7 +31,7 @@ export async function getUserGroup(groupId: number | null): Promise<DbGroup | nu
   return group ?? null;
 }
 
-export async function getEffectiveLimits(user: DbUser): Promise<EffectiveLimits> {
+export async function getEffectiveLimits(user: LimitSource): Promise<EffectiveLimits> {
   const group = await getUserGroup(user.group_id);
 
   return {

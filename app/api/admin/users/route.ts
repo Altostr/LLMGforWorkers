@@ -2,7 +2,7 @@ export const dynamic = "force-dynamic";
 
 import { z } from "zod";
 import { hashPassword } from "@/lib/auth";
-import { gatewayDb } from "@/lib/db";
+import { gatewayDb, type DbUser } from "@/lib/db";
 import { ensureAdmin } from "@/lib/guards";
 import { jsonError, jsonOk } from "@/lib/http";
 import { getEffectiveLimits, getUserGroup } from "@/lib/effective-limits";
@@ -37,6 +37,27 @@ const USER_SORT_COLUMNS = {
   username: "u.username",
 } as const;
 
+type UserListRow = Pick<
+  DbUser,
+  | "id"
+  | "username"
+  | "role"
+  | "group_id"
+  | "rpm"
+  | "qps"
+  | "tpm"
+  | "quota_tokens"
+  | "quota_requests"
+  | "used_tokens"
+  | "used_requests"
+  | "allowed_model_aliases"
+  | "note"
+  | "enabled"
+  | "created_at"
+> & {
+  group_name: string | null;
+};
+
 export async function GET(request: Request) {
   const guard = await ensureAdmin(request);
   if ("error" in guard) return guard.error;
@@ -70,7 +91,7 @@ export async function GET(request: Request) {
   }
   const whereSql = `WHERE ${whereParts.join(" AND ")}`;
 
-  const rows = await gatewayDb.all<Record<string, unknown> & { allowed_model_aliases: string }>(
+  const rows = await gatewayDb.all<UserListRow>(
     `SELECT u.id, u.username, u.role, u.group_id, g.name AS group_name,
               u.rpm, u.qps, u.tpm, u.quota_tokens, u.quota_requests,
               u.used_tokens, u.used_requests, u.allowed_model_aliases, u.note, u.enabled, u.created_at
@@ -102,11 +123,10 @@ export async function GET(request: Request) {
   ) as { total: number };
 
   const data = await Promise.all(rows.map(async (row) => {
-    const r = row as Record<string, unknown>;
-    const group = await getUserGroup((r.group_id as number | null) ?? null);
-    const effective = await getEffectiveLimits(r as any);
+    const group = await getUserGroup(row.group_id ?? null);
+    const effective = await getEffectiveLimits(row);
     return {
-      ...r,
+      ...row,
       allowed_model_aliases: parseAllowedModelAliases(row.allowed_model_aliases),
       group_rpm: group?.rpm ?? null,
       group_qps: group?.qps ?? null,

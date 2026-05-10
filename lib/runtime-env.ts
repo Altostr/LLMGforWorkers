@@ -9,7 +9,7 @@ export function getRuntimeEnvValue(key: string): string | undefined {
   if (processValue !== undefined && processValue !== "") return processValue;
 
   try {
-    const context = getCloudflareContext() as CloudflareContextLike;
+    const context = getCloudflareContext() as unknown as CloudflareContextLike;
     const value = context.env?.[key];
     if (typeof value === "string") return value;
     if (typeof value === "number" || typeof value === "boolean") return String(value);
