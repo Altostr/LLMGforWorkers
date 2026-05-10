@@ -1,5 +1,6 @@
 // OpenNext generates this file during `opennextjs-cloudflare build`.
-// @ts-expect-error OpenNext generates this file during build.
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore OpenNext generates this file during build.
 import nextWorker from "./.open-next/worker.js";
 import { processChatLogQueueBatch, type QueueBatchLike, type QueueEnvLike } from "./lib/chat-log-queue";
 
