@@ -1,6 +1,7 @@
 export const dynamic = "force-dynamic";
 
 import { getCloudflareContext } from "@opennextjs/cloudflare";
+import { createLog } from "@/lib/data/repositories/log-repository";
 import { gatewayDb } from "@/lib/db";
 import { ensureAdmin } from "@/lib/guards";
 import { jsonOk } from "@/lib/http";
@@ -22,6 +23,8 @@ type TableColumn = {
 };
 
 type LogWriteMode = "queue_with_d1_fallback" | "direct_d1" | "binding_missing";
+
+const DIAGNOSTIC_PROBE_MODEL = "__diagnostic_probe__";
 
 function getBindingDiagnostics() {
   try {
@@ -48,6 +51,11 @@ function getLogWriteMode(bindings: ReturnType<typeof getBindingDiagnostics>): Lo
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function createProbeEventId() {
+  const cryptoLike = globalThis.crypto as (Crypto & { randomUUID?: () => string }) | undefined;
+  return `diagnostic-${cryptoLike?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`}`;
 }
 
 export async function GET(request: Request) {
@@ -104,6 +112,7 @@ export async function GET(request: Request) {
       repaired_columns: repair.repaired_columns,
       created_table: repair.created_table,
       log_write_mode: logWriteMode,
+      write_probe_available: true,
       runtime: bindings,
       logs_table: {
         exists: tableExists,
@@ -127,6 +136,7 @@ export async function GET(request: Request) {
       repaired_columns: [],
       created_table: false,
       log_write_mode: logWriteMode,
+      write_probe_available: true,
       runtime: bindings,
       logs_table: {
         exists: false,
@@ -138,4 +148,75 @@ export async function GET(request: Request) {
       counts_error: errorMessage(error),
     });
   }
+}
+
+export async function POST(request: Request) {
+  const guard = await ensureAdmin(request);
+  if ("error" in guard) return guard.error;
+
+  const probeEventId = createProbeEventId();
+  let d1InsertOk = false;
+  let d1ReadbackOk = false;
+  let cleanupOk = false;
+  let probeError: string | null = null;
+
+  try {
+    await ensureLogsSchema(gatewayDb);
+    await createLog({
+      user_id: guard.auth.user.id,
+      key_id: 0,
+      channel_id: null,
+      model_alias: DIAGNOSTIC_PROBE_MODEL,
+      real_model: null,
+      stream: false,
+      status_code: 204,
+      estimated_tokens: 0,
+      prompt_tokens: 0,
+      completion_tokens: 0,
+      total_tokens: 0,
+      latency_ms: 0,
+      first_token_latency_ms: null,
+      output_tps: null,
+      route_attempts: 1,
+      attempted_channels: null,
+      error_message: null,
+      client_ip: null,
+      log_event_id: probeEventId,
+      created_at: new Date().toISOString(),
+    });
+    d1InsertOk = true;
+
+    const readback = await gatewayDb.get<{ id: number }>(
+      "SELECT id FROM logs WHERE log_event_id = ? LIMIT 1",
+      probeEventId,
+    );
+    d1ReadbackOk = Boolean(readback);
+  } catch (error) {
+    probeError = errorMessage(error);
+    console.error("Dashboard diagnostics log write probe failed.", {
+      probe_event_id: probeEventId,
+      error,
+    });
+  } finally {
+    try {
+      await gatewayDb.run("DELETE FROM logs WHERE log_event_id = ?", probeEventId);
+      cleanupOk = true;
+    } catch (error) {
+      const cleanupError = errorMessage(error);
+      probeError = probeError ? `${probeError}; cleanup: ${cleanupError}` : `cleanup: ${cleanupError}`;
+      console.error("Dashboard diagnostics log write probe cleanup failed.", {
+        probe_event_id: probeEventId,
+        error,
+      });
+    }
+  }
+
+  return jsonOk({
+    ok: d1InsertOk && d1ReadbackOk && cleanupOk && !probeError,
+    d1_insert_ok: d1InsertOk,
+    d1_readback_ok: d1ReadbackOk,
+    cleanup_ok: cleanupOk,
+    probe_event_id: probeEventId,
+    probe_error: probeError,
+  });
 }
