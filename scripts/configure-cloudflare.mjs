@@ -194,6 +194,8 @@ ensureQueue(queueName);
 ensureQueue(dlqName);
 
 config.name = workerName;
+config.workers_dev = true;
+config.preview_urls = true;
 config.services = (config.services ?? []).map((service) =>
   service.binding === "WORKER_SELF_REFERENCE"
     ? { ...service, service: workerName }
