@@ -155,7 +155,7 @@ function ensureQueue(name) {
     return;
   }
 
-  if (/already exists|already been taken|exists/i.test(result.combined)) {
+  if (/already exists|already (?:been )?taken|exists|\bcode:\s*11009\b/i.test(result.combined)) {
     console.log(`Cloudflare Queue "${name}" already exists.`);
     return;
   }
