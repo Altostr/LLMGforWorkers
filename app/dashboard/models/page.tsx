@@ -21,9 +21,9 @@ type ModelItem = {
 };
 
 const ENDPOINTS = [
-  { label: "Chat Completions (OpenAI)", path: "/v1/chat/completions", compatiblePath: "/api/v1/chat/completions", method: "POST" },
-  { label: "Responses (OpenAI)", path: "/v1/responses", compatiblePath: "/api/v1/responses", method: "POST" },
-  { label: "Messages (Anthropic Claude)", path: "/v1/messages", compatiblePath: "/api/v1/messages", method: "POST" },
+  { label: "Chat Completions (OpenAI)", path: "/api/v1/chat/completions", method: "POST" },
+  { label: "Responses (OpenAI)", path: "/api/v1/responses", method: "POST" },
+  { label: "Messages (Anthropic Claude)", path: "/api/v1/messages", method: "POST" },
 ] as const;
 
 export default function AvailableModelsPage() {
@@ -86,13 +86,13 @@ export default function AvailableModelsPage() {
             <div className="space-y-2 rounded-xl border border-white/10 bg-slate-950/50 px-4 py-3">
               <p className="text-xs font-medium text-zinc-400">Base URL</p>
               <div className="flex items-center gap-2">
-                <code className="flex-1 truncate rounded bg-white/5 px-3 py-2 text-sm text-zinc-100">{origin}/v1</code>
-                <Button type="button" variant="outline" size="sm" onClick={() => copyText(`${origin}/v1`)}>
+                <code className="flex-1 truncate rounded bg-white/5 px-3 py-2 text-sm text-zinc-100">{origin}/api/v1</code>
+                <Button type="button" variant="outline" size="sm" onClick={() => copyText(`${origin}/api/v1`)}>
                   <Copy className="mr-1.5 h-3.5 w-3.5" />
                   复制
                 </Button>
               </div>
-              <p className="text-xs text-zinc-500">推荐用于 OpenAI SDK 等客户端的 base_url / api_base 配置项；历史 /api/v1 路径仍兼容。</p>
+              <p className="text-xs text-zinc-500">适用于 OpenAI SDK 等客户端的 base_url / api_base 配置项。</p>
             </div>
 
             <div className="space-y-2">
@@ -111,10 +111,7 @@ export default function AvailableModelsPage() {
                       <TableRow key={ep.path}>
                         <TableCell className="text-sm font-medium text-zinc-100">{ep.label}</TableCell>
                         <TableCell>
-                          <div className="space-y-1">
-                            <code className="block rounded bg-white/5 px-2 py-1 text-xs text-zinc-300">{origin}{ep.path}</code>
-                            <code className="block rounded bg-white/5 px-2 py-1 text-xs text-zinc-500">{origin}{ep.compatiblePath}</code>
-                          </div>
+                          <code className="rounded bg-white/5 px-2 py-1 text-xs text-zinc-300">{origin}{ep.path}</code>
                         </TableCell>
                         <TableCell>
                           <Button size="sm" variant="ghost" onClick={() => copyText(`${origin}${ep.path}`)}>
