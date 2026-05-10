@@ -1,8 +1,10 @@
+import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { checkApiKeyAuth } from "@/lib/api-key-auth";
 import { acquireChannel } from "@/lib/channel-runtime";
 import { insertChatLog } from "@/lib/chat-log";
 import { gatewayDb } from "@/lib/db";
 import { getEffectiveLimits } from "@/lib/effective-limits";
+import { createGatewayRequestId, withGatewayResponseHeaders } from "@/lib/gateway-response-headers";
 import { jsonError } from "@/lib/http";
 import { resolveAccessibleModelAlias } from "@/lib/model-access";
 import {
@@ -44,6 +46,27 @@ type PickedRoute =
     };
 
 const RETRYABLE_UPSTREAM_STATUS = new Set([401, 429, 500, 502, 503, 504]);
+
+type WaitUntilContextLike = {
+  waitUntil(promise: Promise<unknown>): void;
+};
+
+type CloudflareContextLike = {
+  ctx?: WaitUntilContextLike;
+};
+
+function waitUntilGatewayTask(promise: Promise<unknown>) {
+  const guarded = promise.catch((error) => {
+    console.error("Gateway background task failed.", error);
+  });
+
+  try {
+    const context = getCloudflareContext() as CloudflareContextLike;
+    context.ctx?.waitUntil(guarded);
+  } catch {
+    // Local/runtime contexts without Cloudflare waitUntil still await the original task.
+  }
+}
 
 function appendQuotaHeaders(headers: Record<string, string>, quota: QuotaInfo) {
   if (quota.remaining_requests !== null) {
@@ -167,16 +190,22 @@ export async function handleGatewayProtocolRequest(request: Request, inboundProt
 
   const authResult = await checkApiKeyAuth(request);
   if (!authResult.ok) {
-    return jsonError(authResult.reason === "missing" ? "Missing API key." : "Invalid or disabled API key.", 401, {
+    return withGatewayResponseHeaders(jsonError(authResult.reason === "missing" ? "Missing API key." : "Invalid or disabled API key.", 401, {
       type: "auth_error",
       param: "None",
       code: "401",
-    });
+    }), { protocol: inboundProtocol });
   }
   const auth = authResult.context;
+  const logEventId = createGatewayRequestId();
+  const withDiagnostics = (resp: Response): Response => withGatewayResponseHeaders(resp, {
+    protocol: inboundProtocol,
+    requestId: logEventId,
+  });
 
   const logRejected = async (statusCode: number, message: string, alias: string | null, estimatedTokens?: number) => {
     await insertChatLog({
+      log_event_id: logEventId,
       user_id: auth.user.id,
       key_id: auth.key.id,
       channel_id: null,
@@ -197,20 +226,20 @@ export async function handleGatewayProtocolRequest(request: Request, inboundProt
   const contentLength = parseInt(request.headers.get("content-length") || "0");
   if (contentLength > 10 * 1024 * 1024) {
     await logRejected(413, "Request body is too large.", null);
-    return jsonError("Request body is too large.", 413);
+    return withDiagnostics(jsonError("Request body is too large.", 413));
   }
 
   const rawBody = await request.json().catch(() => null);
   if (!rawBody || typeof rawBody !== "object") {
     await logRejected(400, "Invalid request body.", null);
-    return jsonError("Invalid request body.", 400);
+    return withDiagnostics(jsonError("Invalid request body.", 400));
   }
 
   const body = rawBody as Record<string, unknown>;
   const alias = body.model;
   if (typeof alias !== "string" || alias.length === 0) {
     await logRejected(400, "Missing model parameter.", null);
-    return jsonError("Missing model parameter.", 400);
+    return withDiagnostics(jsonError("Missing model parameter.", 400));
   }
 
   const estimatedTokens = estimateRequestTokensForProtocol(body, inboundProtocol);
@@ -218,7 +247,7 @@ export async function handleGatewayProtocolRequest(request: Request, inboundProt
   if (!resolved.ok) {
     const message = resolved.reason === "forbidden" ? "Current user cannot access this model." : "Model alias not found or disabled.";
     await logRejected(resolved.reason === "forbidden" ? 403 : 404, message, alias, estimatedTokens);
-    return jsonError(message, resolved.reason === "forbidden" ? 403 : 404);
+    return withDiagnostics(jsonError(message, resolved.reason === "forbidden" ? 403 : 404));
   }
 
   const quotaResult = await checkQuota(auth.user.id, estimatedTokens);
@@ -226,7 +255,7 @@ export async function handleGatewayProtocolRequest(request: Request, inboundProt
     await logRejected(429, quotaResult.reason, alias, estimatedTokens);
     const headers: Record<string, string> = {};
     if (quotaResult.quota) appendQuotaHeaders(headers, quotaResult.quota);
-    return jsonError(quotaResult.reason, 429, undefined, headers);
+    return withDiagnostics(jsonError(quotaResult.reason, 429, undefined, headers));
   }
 
   const quotaHeaders: Record<string, string> = {};
@@ -235,13 +264,13 @@ export async function handleGatewayProtocolRequest(request: Request, inboundProt
     for (const [k, v] of Object.entries(quotaHeaders)) {
       resp.headers.set(k, v);
     }
-    return resp;
+    return withDiagnostics(resp);
   };
 
   const rate = await checkUserRateLimit(auth.user, estimatedTokens);
   if (!rate.ok) {
     await logRejected(429, rate.reason, alias, estimatedTokens);
-    return jsonError(rate.reason, 429);
+    return withDiagnostics(jsonError(rate.reason, 429));
   }
 
   const settings = await getGatewaySettings();
@@ -304,6 +333,7 @@ export async function handleGatewayProtocolRequest(request: Request, inboundProt
   const picked = await pickRoute();
   if (!picked.ok) {
     await insertChatLog({
+      log_event_id: logEventId,
       user_id: auth.user.id,
       key_id: auth.key.id,
       channel_id: picked.route?.channel.id ?? null,
@@ -339,6 +369,7 @@ export async function handleGatewayProtocolRequest(request: Request, inboundProt
       const upstreamError = parseUpstreamError(text, upstream.status);
       lease.complete({ ok: false, latencyMs: Date.now() - startedAt });
       await insertChatLog({
+        log_event_id: logEventId,
         user_id: auth.user.id,
         key_id: auth.key.id,
         channel_id: route.channel.id,
@@ -380,6 +411,7 @@ export async function handleGatewayProtocolRequest(request: Request, inboundProt
       lease.complete({ ok: true, latencyMs: Date.now() - startedAt });
       await addUsage(auth.user.id, auth.key.id, Math.max(1, totalTokens), 1);
       await insertChatLog({
+        log_event_id: logEventId,
         user_id: auth.user.id,
         key_id: auth.key.id,
         channel_id: route.channel.id,
@@ -428,6 +460,7 @@ export async function handleGatewayProtocolRequest(request: Request, inboundProt
       }
 
       await insertChatLog({
+        log_event_id: logEventId,
         user_id: auth.user.id,
         key_id: auth.key.id,
         channel_id: route.channel.id,
@@ -462,11 +495,15 @@ export async function handleGatewayProtocolRequest(request: Request, inboundProt
         } catch (error) {
           controller.error(error);
         } finally {
-          await finalize();
+          const finalizePromise = finalize();
+          waitUntilGatewayTask(finalizePromise);
+          await finalizePromise;
         }
       },
       cancel() {
-        return finalize();
+        const finalizePromise = finalize();
+        waitUntilGatewayTask(finalizePromise);
+        return finalizePromise;
       },
     });
 
@@ -484,6 +521,7 @@ export async function handleGatewayProtocolRequest(request: Request, inboundProt
     const upstreamError = parseUpstreamError(rawText, upstream.status);
     lease.complete({ ok: false, latencyMs: Date.now() - startedAt });
     await insertChatLog({
+      log_event_id: logEventId,
       user_id: auth.user.id,
       key_id: auth.key.id,
       channel_id: route.channel.id,
@@ -524,6 +562,7 @@ export async function handleGatewayProtocolRequest(request: Request, inboundProt
   lease.complete({ ok: true, latencyMs: Date.now() - startedAt });
   await addUsage(auth.user.id, auth.key.id, Math.max(1, localTotalTokens), 1);
   await insertChatLog({
+    log_event_id: logEventId,
     user_id: auth.user.id,
     key_id: auth.key.id,
     channel_id: route.channel.id,
