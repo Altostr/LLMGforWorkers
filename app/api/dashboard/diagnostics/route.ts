@@ -4,29 +4,7 @@ import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { gatewayDb } from "@/lib/db";
 import { ensureAdmin } from "@/lib/guards";
 import { jsonOk } from "@/lib/http";
-
-const REQUIRED_LOG_COLUMNS = [
-  "log_event_id",
-  "user_id",
-  "key_id",
-  "channel_id",
-  "model_alias",
-  "real_model",
-  "stream",
-  "status_code",
-  "estimated_tokens",
-  "prompt_tokens",
-  "completion_tokens",
-  "total_tokens",
-  "latency_ms",
-  "first_token_latency_ms",
-  "output_tps",
-  "route_attempts",
-  "attempted_channels",
-  "error_message",
-  "client_ip",
-  "created_at",
-] as const;
+import { ensureLogsSchema, REQUIRED_LOG_COLUMNS } from "@/lib/logs-schema";
 
 type CloudflareContextLike = {
   env?: {
@@ -71,9 +49,9 @@ export async function GET(request: Request) {
   const bindings = getBindingDiagnostics();
 
   try {
-    const columns = await gatewayDb.all<TableColumn>("PRAGMA table_info(logs)");
-    const columnNames = new Set(columns.map((column) => column.name));
-    const missingColumns = REQUIRED_LOG_COLUMNS.filter((column) => !columnNames.has(column));
+    const repair = await ensureLogsSchema(gatewayDb);
+    const columns = repair.columns as TableColumn[];
+    const missingColumns = repair.missing_columns;
     const tableExists = columns.length > 0;
 
     let counts:
@@ -113,6 +91,9 @@ export async function GET(request: Request) {
 
     return jsonOk({
       ok: tableExists && missingColumns.length === 0 && !countsError,
+      missing_columns: missingColumns,
+      repaired_columns: repair.repaired_columns,
+      created_table: repair.created_table,
       runtime: bindings,
       logs_table: {
         exists: tableExists,
@@ -132,6 +113,9 @@ export async function GET(request: Request) {
   } catch (error) {
     return jsonOk({
       ok: false,
+      missing_columns: REQUIRED_LOG_COLUMNS,
+      repaired_columns: [],
+      created_table: false,
       runtime: bindings,
       logs_table: {
         exists: false,

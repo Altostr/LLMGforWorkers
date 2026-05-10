@@ -1,4 +1,5 @@
 import { createLogStatement, type CreateLogInput, type LogSqlParam } from "./chat-log-statement";
+import { createD1LogsSchemaDatabase, ensureLogsSchema } from "./logs-schema";
 
 export const CHAT_LOG_QUEUE_MESSAGE_TYPE = "chat_log";
 export const CHAT_LOG_QUEUE_MESSAGE_VERSION = 1;
@@ -36,6 +37,7 @@ type D1Result<T = unknown> = {
 
 type D1PreparedStatement = {
   bind(...values: LogSqlParam[]): D1PreparedStatement;
+  all<T = unknown>(): Promise<D1Result<T>>;
   run<T = unknown>(): Promise<D1Result<T>>;
 };
 
@@ -169,6 +171,7 @@ export async function processChatLogQueueBatch(batch: QueueBatchLike, env: Queue
   if (valid.length === 0) return;
 
   try {
+    await ensureLogsSchema(createD1LogsSchemaDatabase(db));
     const statements = valid.map((item) => createLogStatement(item.body.payload));
     const prepared = statements.map((statement) => db.prepare(statement.sql).bind(...statement.params));
     await db.batch(prepared);

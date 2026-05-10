@@ -3,6 +3,7 @@ export const dynamic = "force-dynamic";
 import { gatewayDb } from "@/lib/db";
 import { ensureWebUser } from "@/lib/guards";
 import { jsonError, jsonOk } from "@/lib/http";
+import { ensureLogsSchema } from "@/lib/logs-schema";
 
 function asNumber(value: unknown) {
   const numberValue = typeof value === "number" ? value : Number(value ?? 0);
@@ -58,6 +59,11 @@ export async function GET(request: Request) {
   if ("error" in guard) return guard.error;
 
   try {
+    const schema = await ensureLogsSchema(gatewayDb);
+    if (schema.missing_columns.length > 0) {
+      return jsonError(`logs 表结构仍缺少字段：${schema.missing_columns.join(", ")}。请查看诊断页面。`, 500);
+    }
+
     const isAdmin = guard.auth.user.role === "admin";
     const whereSql = isAdmin ? "" : "WHERE user_id = ?";
     const whereArgs = isAdmin ? [] : [guard.auth.user.id];
