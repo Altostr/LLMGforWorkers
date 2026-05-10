@@ -59,14 +59,14 @@ export async function GET(request: Request) {
   }
 
   if (startDate) {
-    whereClauses.push("l.created_at >= ?");
+    whereClauses.push("datetime(l.created_at) >= datetime(?)");
     whereArgs.push(`${startDate} 00:00:00`);
   }
 
   if (endDate) {
     const nextDate = addOneDay(endDate);
     if (nextDate) {
-      whereClauses.push("l.created_at < ?");
+      whereClauses.push("datetime(l.created_at) < datetime(?)");
       whereArgs.push(`${nextDate} 00:00:00`);
     }
   }
@@ -110,7 +110,7 @@ export async function GET(request: Request) {
        LEFT JOIN channels c ON c.id = l.channel_id
        ${whereSql}`,
     ...whereArgs,
-  ) as { total: number };
+  );
 
   const summary = await gatewayDb.get<{
     total_requests: number;
@@ -122,7 +122,7 @@ export async function GET(request: Request) {
   }>(
     `SELECT
          COUNT(*) AS total_requests,
-         SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) AS failed_requests,
+         COALESCE(SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END), 0) AS failed_requests,
          COALESCE(SUM(total_tokens), 0) AS total_tokens,
          COALESCE(AVG(latency_ms), 0) AS avg_latency_ms,
          COALESCE(AVG(first_token_latency_ms), 0) AS avg_first_token_latency_ms,
@@ -132,7 +132,16 @@ export async function GET(request: Request) {
        LEFT JOIN channels c ON c.id = l.channel_id
        ${whereSql}`,
     ...whereArgs,
-  ) as {
+  );
+
+  const safeSummary = summary ?? {
+    total_requests: 0,
+    failed_requests: 0,
+    total_tokens: 0,
+    avg_latency_ms: 0,
+    avg_first_token_latency_ms: 0,
+    avg_output_tps: 0,
+  } satisfies {
     total_requests: number;
     failed_requests: number;
     total_tokens: number;
@@ -142,8 +151,8 @@ export async function GET(request: Request) {
   };
 
   return jsonOk({
-    summary,
+    summary: safeSummary,
     data,
-    paging: { limit, offset, total: total.total },
+    paging: { limit, offset, total: total?.total ?? 0 },
   });
 }

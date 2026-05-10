@@ -59,6 +59,11 @@ function formatDuration(ms: number | null | undefined) {
   return `${(min / 60).toFixed(2)} h`;
 }
 
+async function readErrorMessage(response: Response, fallback: string) {
+  const payload = await response.json().catch(() => null) as { error?: { message?: string } } | null;
+  return payload?.error?.message ?? fallback;
+}
+
 export default function DashboardHomePage() {
   const router = useRouter();
   const initialProfile = useAuthProfile();
@@ -66,6 +71,7 @@ export default function DashboardHomePage() {
   const [loading, setLoading] = useState(true);
   const [role, setRole] = useState<Role>(() => (initialProfile?.role as Role | undefined) ?? (getCachedProfile()?.role as Role | undefined) ?? "user");
   const [summary, setSummary] = useState<Summary | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => setChartReady(true));
@@ -85,8 +91,11 @@ export default function DashboardHomePage() {
         if (summaryResp.ok) {
           const summaryData = await summaryResp.json();
           setSummary(summaryData.data ?? null);
+        } else {
+          setError(await readErrorMessage(summaryResp, "统计数据加载失败，请稍后重试。"));
         }
       })
+      .catch(() => setError("统计数据加载失败，请检查服务状态后重试。"))
       .finally(() => setLoading(false));
   }, [router]);
 
@@ -227,6 +236,14 @@ export default function DashboardHomePage() {
             />
           ))}
         </div>
+
+        {error ? (
+          <EmptyState
+            title="统计加载失败"
+            description={error}
+            className="min-h-0 items-start px-4 py-4 text-left"
+          />
+        ) : null}
 
         <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(280px,1fr)]">
           <Card>

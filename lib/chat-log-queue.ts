@@ -1,4 +1,12 @@
-import { createLogStatement, type CreateLogInput, type LogSqlParam } from "./chat-log-statement";
+import {
+  createLogStatement,
+  createUtcLogTimestamp,
+  isMissingLogEventIdColumnError,
+  normalizeLogTimestamp,
+  type CreateLogInput,
+  type LogSqlParam,
+  type LogStatementMode,
+} from "./chat-log-statement";
 
 export const CHAT_LOG_QUEUE_MESSAGE_TYPE = "chat_log";
 export const CHAT_LOG_QUEUE_MESSAGE_VERSION = 1;
@@ -51,7 +59,7 @@ function createEventId() {
 
 export function createChatLogQueueMessage(input: CreateLogInput): ChatLogQueueMessage {
   const eventId = input.log_event_id ?? createEventId();
-  const createdAt = input.created_at ?? new Date().toISOString();
+  const createdAt = normalizeLogTimestamp(input.created_at) ?? createUtcLogTimestamp();
 
   return {
     type: CHAT_LOG_QUEUE_MESSAGE_TYPE,
@@ -64,6 +72,16 @@ export function createChatLogQueueMessage(input: CreateLogInput): ChatLogQueueMe
       created_at: createdAt,
     },
   };
+}
+
+async function writeLogBatch(
+  db: D1DatabaseLike,
+  valid: Array<{ message: QueueMessageLike; body: ChatLogQueueMessage }>,
+  mode: LogStatementMode,
+) {
+  const statements = valid.map((item) => createLogStatement(item.body.payload, mode));
+  const prepared = statements.map((statement) => db.prepare(statement.sql).bind(...statement.params));
+  await db.batch(prepared);
 }
 
 function isNullableString(value: unknown): value is string | null | undefined {
@@ -151,14 +169,25 @@ export async function processChatLogQueueBatch(batch: QueueBatchLike, env: Queue
   if (valid.length === 0) return;
 
   try {
-    const statements = valid.map((item) => createLogStatement(item.body.payload));
-    const prepared = statements.map((statement) => db.prepare(statement.sql).bind(...statement.params));
-    await db.batch(prepared);
+    await writeLogBatch(db, valid, "modern");
     for (const item of valid) {
       item.message.ack();
     }
   } catch (error) {
-    console.error("Failed to write LOG_QUEUE batch.", error);
+    if (isMissingLogEventIdColumnError(error)) {
+      try {
+        await writeLogBatch(db, valid, "legacy");
+        for (const item of valid) {
+          item.message.ack();
+        }
+        return;
+      } catch (legacyError) {
+        console.error("Failed to write legacy LOG_QUEUE batch.", legacyError);
+      }
+    } else {
+      console.error("Failed to write LOG_QUEUE batch.", error);
+    }
+
     for (const item of valid) {
       item.message.retry();
     }

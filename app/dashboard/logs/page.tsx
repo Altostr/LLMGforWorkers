@@ -87,6 +87,11 @@ function formatDateValue(date?: Date) {
   return date ? format(date, "yyyy-MM-dd") : "";
 }
 
+async function readErrorMessage(response: Response, fallback: string) {
+  const payload = await response.json().catch(() => null) as { error?: { message?: string } } | null;
+  return payload?.error?.message ?? fallback;
+}
+
 type DateFilterProps = {
   value: string;
   placeholder: string;
@@ -151,6 +156,7 @@ export default function AdminLogsPage() {
   const [rows, setRows] = useState<LogRow[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [role, setRole] = useState<"admin" | "user">(() => initialProfile?.role ?? getCachedProfile()?.role ?? "user");
   const [page, setPage] = useState(1);
   const pageSize = 20;
@@ -176,48 +182,63 @@ export default function AdminLogsPage() {
   ) {
     const requestSeq = ++loadSeqRef.current;
     setLoading(true);
+    setError(null);
 
-    const profile = await getOrFetchProfile();
-    if (requestSeq !== loadSeqRef.current) return;
-    if (!profile) {
-      clearSession();
-      router.replace("/login");
-      return;
-    }
-    const nextRole = profile.role as "admin" | "user";
-    setRole(nextRole);
+    try {
+      const profile = await getOrFetchProfile();
+      if (requestSeq !== loadSeqRef.current) return;
+      if (!profile) {
+        clearSession();
+        setLoading(false);
+        router.replace("/login");
+        return;
+      }
+      const nextRole = profile.role as "admin" | "user";
+      setRole(nextRole);
 
-    const nextFilterUser = filters?.user ?? filterUser;
-    const nextFilterModel = filters?.model ?? filterModel;
-    const nextFilterChannel = filters?.channel ?? filterChannel;
-    const nextFilterIp = filters?.ip ?? filterIp;
-    const nextFilterStartDate = filters?.startDate ?? filterStartDate;
-    const nextFilterEndDate = filters?.endDate ?? filterEndDate;
-    const offset = (nextPage - 1) * pageSize;
-    const params = new URLSearchParams({
-      limit: String(pageSize),
-      offset: String(offset),
-    });
-    if (nextRole === "admin" && nextFilterUser.trim()) params.set("user", nextFilterUser.trim());
-    if (nextFilterModel.trim()) params.set("model", nextFilterModel.trim());
-    if (nextRole === "admin" && nextFilterChannel.trim()) params.set("channel", nextFilterChannel.trim());
-    if (nextFilterIp.trim()) params.set("ip", nextFilterIp.trim());
-    if (nextFilterStartDate) params.set("start_date", nextFilterStartDate);
-    if (nextFilterEndDate) params.set("end_date", nextFilterEndDate);
+      const nextFilterUser = filters?.user ?? filterUser;
+      const nextFilterModel = filters?.model ?? filterModel;
+      const nextFilterChannel = filters?.channel ?? filterChannel;
+      const nextFilterIp = filters?.ip ?? filterIp;
+      const nextFilterStartDate = filters?.startDate ?? filterStartDate;
+      const nextFilterEndDate = filters?.endDate ?? filterEndDate;
+      const offset = (nextPage - 1) * pageSize;
+      const params = new URLSearchParams({
+        limit: String(pageSize),
+        offset: String(offset),
+      });
+      if (nextRole === "admin" && nextFilterUser.trim()) params.set("user", nextFilterUser.trim());
+      if (nextFilterModel.trim()) params.set("model", nextFilterModel.trim());
+      if (nextRole === "admin" && nextFilterChannel.trim()) params.set("channel", nextFilterChannel.trim());
+      if (nextFilterIp.trim()) params.set("ip", nextFilterIp.trim());
+      if (nextFilterStartDate) params.set("start_date", nextFilterStartDate);
+      if (nextFilterEndDate) params.set("end_date", nextFilterEndDate);
 
-    const response = await authedFetch(`/api/dashboard/logs?${params.toString()}`);
-    if (requestSeq !== loadSeqRef.current) return;
-    if (!response.ok) {
+      const response = await authedFetch(`/api/dashboard/logs?${params.toString()}`);
+      if (requestSeq !== loadSeqRef.current) return;
+      if (!response.ok) {
+        setError(await readErrorMessage(response, "日志数据加载失败，请稍后重试。"));
+        setRows([]);
+        setSummary(null);
+        setTotal(0);
+        setLoading(false);
+        return;
+      }
+      const data = await response.json();
+      if (requestSeq !== loadSeqRef.current) return;
+      setRows(Array.isArray(data.data) ? data.data : []);
+      setSummary(data.summary ?? null);
+      setTotal(data.paging?.total ?? 0);
+      setPage(nextPage);
       setLoading(false);
-      return;
+    } catch {
+      if (requestSeq !== loadSeqRef.current) return;
+      setError("日志数据加载失败，请检查服务状态后重试。");
+      setRows([]);
+      setSummary(null);
+      setTotal(0);
+      setLoading(false);
     }
-    const data = await response.json();
-    if (requestSeq !== loadSeqRef.current) return;
-    setRows(data.data);
-    setSummary(data.summary);
-    setTotal(data.paging?.total ?? 0);
-    setPage(nextPage);
-    setLoading(false);
   }
 
   useEffect(() => {
@@ -389,6 +410,14 @@ export default function AdminLogsPage() {
           <MetricCard label="平均首 Token" value={formatDuration(summary?.avg_first_token_latency_ms)} hint="首个 token 返回速度" icon={Timer} />
           <MetricCard label="平均输出速度" value={`${(summary?.avg_output_tps ?? 0).toFixed(2)} t/s`} hint="用于判断上游模型质量" icon={Clock3} />
         </div>
+
+        {error ? (
+          <EmptyState
+            title="日志加载失败"
+            description={error}
+            className="min-h-0 items-start px-4 py-4 text-left"
+          />
+        ) : null}
 
         <Card>
           <CardHeader className="pb-3">

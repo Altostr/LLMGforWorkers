@@ -56,7 +56,7 @@ export async function GET(request: Request) {
   const whereSql = isAdmin ? "" : "WHERE user_id = ?";
   const whereArgs = isAdmin ? [] : [guard.auth.user.id];
 
-  const summary = await gatewayDb.get<{
+  const summaryRow = await gatewayDb.get<{
     total_requests: number;
     total_tokens: number;
     failed_requests: number;
@@ -76,7 +76,16 @@ export async function GET(request: Request) {
        FROM logs
        ${whereSql}`,
     ...whereArgs,
-  ) as {
+  );
+  const summary = summaryRow ?? {
+    total_requests: 0,
+    total_tokens: 0,
+    failed_requests: 0,
+    rate_limited_requests: 0,
+    avg_latency_ms: 0,
+    avg_output_tps: 0,
+    retry_requests: 0,
+  } satisfies {
     total_requests: number;
     total_tokens: number;
     failed_requests: number;
@@ -98,14 +107,14 @@ export async function GET(request: Request) {
       ? "SELECT COUNT(*) AS total_keys FROM keys WHERE deleted_at IS NULL"
       : "SELECT COUNT(*) AS total_keys FROM keys WHERE user_id = ? AND deleted_at IS NULL",
     ...(isAdmin ? [] : [guard.auth.user.id]),
-  ) as { total_keys: number };
+  );
 
   const hourlyRows = await gatewayDb.all<{ hour_bucket: string; tokens: number }>(
     `SELECT
-         strftime('%Y-%m-%dT%H:00:00', created_at) AS hour_bucket,
+         strftime('%Y-%m-%dT%H:00:00', datetime(created_at)) AS hour_bucket,
          COALESCE(SUM(total_tokens), 0) AS tokens
        FROM logs
-       ${whereSql ? `${whereSql} AND` : "WHERE"} created_at >= datetime('now', '-23 hours')
+       ${whereSql ? `${whereSql} AND` : "WHERE"} datetime(created_at) >= datetime('now', '-23 hours')
        GROUP BY hour_bucket
        ORDER BY hour_bucket ASC`,
     ...whereArgs,
@@ -160,9 +169,9 @@ export async function GET(request: Request) {
     `SELECT
          id,
          COALESCE(model_alias, real_model, '-') AS model_name,
-         status_code,
-         total_tokens,
-         latency_ms,
+         COALESCE(status_code, 0) AS status_code,
+         COALESCE(total_tokens, 0) AS total_tokens,
+         COALESCE(latency_ms, 0) AS latency_ms,
          created_at
        FROM logs
        ${whereSql}
@@ -173,13 +182,13 @@ export async function GET(request: Request) {
 
   const concurrencyRows = await gatewayDb.all<{ end_ms: number; latency_ms: number }>(
     `SELECT
-         CAST(unixepoch(created_at) * 1000 AS INTEGER) AS end_ms,
+         CAST(unixepoch(datetime(created_at)) * 1000 AS INTEGER) AS end_ms,
          latency_ms
        FROM logs
        ${whereSql ? `${whereSql} AND` : "WHERE"} channel_id IS NOT NULL
          AND latency_ms IS NOT NULL
          AND latency_ms > 0
-         AND created_at >= datetime('now', '-24 hours')`,
+         AND datetime(created_at) >= datetime('now', '-24 hours')`,
     ...whereArgs,
   );
 
@@ -192,7 +201,7 @@ export async function GET(request: Request) {
       total_requests: summary.total_requests ?? 0,
       total_tokens: summary.total_tokens ?? 0,
       failed_requests: summary.failed_requests ?? 0,
-      total_keys: keyData.total_keys ?? 0,
+      total_keys: keyData?.total_keys ?? 0,
       active_users: activeUsers,
       avg_latency_ms: summary.avg_latency_ms ?? 0,
       avg_output_tps: summary.avg_output_tps ?? 0,
