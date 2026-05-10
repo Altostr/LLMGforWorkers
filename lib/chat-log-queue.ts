@@ -44,6 +44,16 @@ type D1DatabaseLike = {
   batch<T = unknown>(statements: D1PreparedStatement[]): Promise<Array<D1Result<T>>>;
 };
 
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function bodyEventId(body: unknown) {
+  if (!body || typeof body !== "object") return null;
+  const value = (body as Record<string, unknown>).event_id;
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
 function createEventId() {
   const cryptoLike = globalThis.crypto as (Crypto & { randomUUID?: () => string }) | undefined;
   return cryptoLike?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -129,7 +139,11 @@ export function parseChatLogQueueMessage(body: unknown): ChatLogQueueMessage | n
 export async function processChatLogQueueBatch(batch: QueueBatchLike, env: QueueEnvLike) {
   const db = env.DB;
   if (!db) {
-    console.error("LOG_QUEUE consumer is missing DB binding.");
+    console.error("LOG_QUEUE consumer is missing DB binding.", {
+      queue: batch.queue,
+      message_count: batch.messages.length,
+      event_ids: batch.messages.map((message) => bodyEventId(message.body)).filter(Boolean),
+    });
     for (const message of batch.messages) {
       message.retry();
     }
@@ -141,7 +155,11 @@ export async function processChatLogQueueBatch(batch: QueueBatchLike, env: Queue
   for (const message of batch.messages) {
     const parsed = parseChatLogQueueMessage(message.body);
     if (!parsed) {
-      console.warn("Discarding invalid LOG_QUEUE message.");
+      console.warn("Discarding invalid LOG_QUEUE message.", {
+        queue: batch.queue,
+        event_id: bodyEventId(message.body),
+        body_type: typeof message.body,
+      });
       message.ack();
       continue;
     }
@@ -158,7 +176,12 @@ export async function processChatLogQueueBatch(batch: QueueBatchLike, env: Queue
       item.message.ack();
     }
   } catch (error) {
-    console.error("Failed to write LOG_QUEUE batch.", error);
+    console.error("Failed to write LOG_QUEUE batch.", {
+      queue: batch.queue,
+      message_count: valid.length,
+      event_ids: valid.map((item) => item.body.event_id),
+      error: errorMessage(error),
+    });
     for (const item of valid) {
       item.message.retry();
     }
