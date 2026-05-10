@@ -3,6 +3,7 @@ export const dynamic = "force-dynamic";
 import { z } from "zod";
 import { hashPassword } from "@/lib/auth";
 import { gatewayDb } from "@/lib/db";
+import { normalizeQuotaLimit } from "@/lib/effective-limits";
 import { ensureAdmin } from "@/lib/guards";
 import { jsonError, jsonOk } from "@/lib/http";
 import { parseAllowedModelAliases, stringifyAllowedModelAliases } from "@/lib/model-access";
@@ -24,11 +25,6 @@ const updateSchema = z.object({
   new_password: z.string().min(8).optional(),
   reset_usage: z.enum(["all", "total"]).optional(),
 });
-
-function normalizeQuota(value: number | null | undefined) {
-  if (value === null || value === undefined || value < 0) return null;
-  return value;
-}
 
 export async function PUT(request: Request, context: { params: Promise<{ id: string }> }) {
   const guard = await ensureAdmin(request);
@@ -89,11 +85,11 @@ export async function PUT(request: Request, context: { params: Promise<{ id: str
     quota_tokens:
       parsed.data.quota_tokens === undefined
         ? existing.quota_tokens
-        : normalizeQuota(parsed.data.quota_tokens),
+        : normalizeQuotaLimit(parsed.data.quota_tokens),
     quota_requests:
       parsed.data.quota_requests === undefined
         ? existing.quota_requests
-        : normalizeQuota(parsed.data.quota_requests),
+        : normalizeQuotaLimit(parsed.data.quota_requests),
     allowed_model_aliases:
       parsed.data.allowed_model_aliases === undefined
         ? existing.allowed_model_aliases

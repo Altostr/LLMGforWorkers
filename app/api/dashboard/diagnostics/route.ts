@@ -21,6 +21,8 @@ type TableColumn = {
   pk?: number;
 };
 
+type LogWriteMode = "queue_with_d1_fallback" | "direct_d1" | "binding_missing";
+
 function getBindingDiagnostics() {
   try {
     const context = getCloudflareContext() as unknown as CloudflareContextLike;
@@ -38,6 +40,12 @@ function getBindingDiagnostics() {
   }
 }
 
+function getLogWriteMode(bindings: ReturnType<typeof getBindingDiagnostics>): LogWriteMode {
+  if (!bindings.cloudflare_context) return "direct_d1";
+  if (!bindings.d1_binding_visible) return "binding_missing";
+  return bindings.log_queue_binding_visible ? "queue_with_d1_fallback" : "direct_d1";
+}
+
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
@@ -47,6 +55,7 @@ export async function GET(request: Request) {
   if ("error" in guard) return guard.error;
 
   const bindings = getBindingDiagnostics();
+  const logWriteMode = getLogWriteMode(bindings);
 
   try {
     const repair = await ensureLogsSchema(gatewayDb);
@@ -94,6 +103,7 @@ export async function GET(request: Request) {
       missing_columns: missingColumns,
       repaired_columns: repair.repaired_columns,
       created_table: repair.created_table,
+      log_write_mode: logWriteMode,
       runtime: bindings,
       logs_table: {
         exists: tableExists,
@@ -116,6 +126,7 @@ export async function GET(request: Request) {
       missing_columns: REQUIRED_LOG_COLUMNS,
       repaired_columns: [],
       created_table: false,
+      log_write_mode: logWriteMode,
       runtime: bindings,
       logs_table: {
         exists: false,

@@ -4,19 +4,9 @@ import { gatewayDb } from "@/lib/db";
 import { ensureWebUser } from "@/lib/guards";
 import { jsonError, jsonOk } from "@/lib/http";
 import { ensureLogsSchema } from "@/lib/logs-schema";
+import { asNumber, parseBoundedInt } from "@/lib/utils";
 
 const SHANGHAI_OFFSET = "+08:00";
-
-function asNumber(value: unknown) {
-  const numberValue = typeof value === "number" ? value : Number(value ?? 0);
-  return Number.isFinite(numberValue) ? numberValue : 0;
-}
-
-function parseBoundedInt(value: string | null, fallback: number, min: number, max: number) {
-  const parsed = Number(value ?? fallback);
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.min(max, Math.max(min, Math.trunc(parsed)));
-}
 
 function parseDateParam(value: string) {
   const trimmed = value.trim();

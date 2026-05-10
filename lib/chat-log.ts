@@ -31,24 +31,41 @@ function getCloudflareQueueContext(): { queue: QueueProducerLike; ctx: WaitUntil
   }
 }
 
-async function enqueueOrFallback(queue: QueueProducerLike, input: ChatLogInput) {
-  const message = createChatLogQueueMessage(input);
+async function enqueueChatLog(queue: QueueProducerLike, message: ChatLogQueueMessage) {
   try {
     await queue.send(message);
   } catch (error) {
-    console.error("Failed to enqueue chat log; writing synchronously.", error);
-    await createLog({
-      ...input,
-      log_event_id: message.event_id,
-      created_at: message.created_at,
+    console.error("Failed to enqueue chat log.", {
+      event_id: message.event_id,
+      error,
     });
   }
+}
+
+async function writeFallbackLog(input: ChatLogInput) {
+  try {
+    await createLog(input);
+  } catch (error) {
+    console.error("Failed to write fallback chat log to D1.", {
+      log_event_id: input.log_event_id,
+      error,
+    });
+  }
+}
+
+async function enqueueWithD1Fallback(queue: QueueProducerLike, input: ChatLogInput) {
+  const message = createChatLogQueueMessage(input);
+
+  await Promise.allSettled([
+    enqueueChatLog(queue, message),
+    writeFallbackLog(message.payload),
+  ]);
 }
 
 export async function insertChatLog(input: ChatLogInput) {
   const context = getCloudflareQueueContext();
   if (context) {
-    context.ctx.waitUntil(enqueueOrFallback(context.queue, input));
+    context.ctx.waitUntil(enqueueWithD1Fallback(context.queue, input));
     return;
   }
 

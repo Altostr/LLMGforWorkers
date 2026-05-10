@@ -42,7 +42,9 @@ import {
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useToast } from "@/components/ui/toast";
 import { getApiMessage } from "@/lib/api-message";
-import { authedFetch, clearSession, getOrFetchProfile } from "@/lib/client-auth";
+import { authedFetch } from "@/lib/client-auth";
+import { requireAdminDashboardProfile } from "@/lib/dashboard-client";
+import { formatLimit } from "@/lib/utils";
 
 type GroupRow = {
   id: number;
@@ -91,15 +93,6 @@ const initialForm: GroupForm = {
   enabled: true,
 };
 
-function formatLimit(value: number | null | undefined) {
-  if (value === null || value === undefined) return "-";
-  if (value < 0) return "∞";
-  const abs = Math.abs(value);
-  if (abs >= 1_000_000) return `${(value / 1_000_000).toFixed(2)}M`;
-  if (abs >= 1_000) return `${(value / 1_000).toFixed(2)}k`;
-  return String(value);
-}
-
 export default function AdminGroupsPage() {
   const router = useRouter();
   const [rows, setRows] = useState<GroupRow[]>([]);
@@ -110,17 +103,7 @@ export default function AdminGroupsPage() {
   const { toast } = useToast();
 
   async function ensureAdmin() {
-    const profile = await getOrFetchProfile();
-    if (!profile) {
-      clearSession();
-      router.push("/login");
-      return false;
-    }
-    if (profile.role !== "admin") {
-      router.push("/dashboard/keys");
-      return false;
-    }
-    return true;
+    return Boolean(await requireAdminDashboardProfile(router));
   }
 
   async function load() {

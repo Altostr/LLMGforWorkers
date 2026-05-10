@@ -29,7 +29,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { DataTable } from "@/components/ui/data-table";
 import { authedFetch, clearSession, getCachedProfile, getOrFetchProfile } from "@/lib/client-auth";
 import { getApiMessage } from "@/lib/api-message";
-import { formatNumber, formatTokenCount } from "@/lib/utils";
+import { formatDuration, formatNumber, formatTokenCount } from "@/lib/utils";
 
 type Role = "admin" | "user";
 
@@ -51,16 +51,6 @@ type Summary = {
   top_channels: Array<{ channel_name: string; request_count: number; total_tokens: number }>;
   recent_logs: Array<{ id: number; model_name: string; status_code: number; total_tokens: number; latency_ms: number; created_at: string }>;
 };
-
-function formatDuration(ms: number | null | undefined) {
-  if (typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) return "-";
-  if (ms < 1000) return `${Math.round(ms)} ms`;
-  const sec = ms / 1000;
-  if (sec < 60) return `${sec.toFixed(2)} s`;
-  const min = sec / 60;
-  if (min < 60) return `${min.toFixed(2)} m`;
-  return `${(min / 60).toFixed(2)} h`;
-}
 
 export default function DashboardHomePage() {
   const router = useRouter();

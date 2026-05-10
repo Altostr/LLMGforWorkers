@@ -32,7 +32,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { cn } from "@/lib/utils";
 import { authedFetch, clearSession, getCachedProfile, getOrFetchProfile } from "@/lib/client-auth";
 import { getApiMessage } from "@/lib/api-message";
-import { formatNumber, formatTokenCount } from "@/lib/utils";
+import { formatDuration, formatNumber, formatTokenCount } from "@/lib/utils";
 
 type LogRow = {
   id: number;
@@ -63,20 +63,6 @@ type Summary = {
   avg_first_token_latency_ms: number;
   avg_output_tps: number;
 };
-
-function formatDuration(ms: number | null | undefined) {
-  if (typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) return "-";
-  if (ms < 1000) return `${Math.round(ms)} ms`;
-
-  const sec = ms / 1000;
-  if (sec < 60) return `${sec.toFixed(2)} s`;
-
-  const min = sec / 60;
-  if (min < 60) return `${min.toFixed(2)} m`;
-
-  const hour = min / 60;
-  return `${hour.toFixed(2)} h`;
-}
 
 function parseDateValue(value: string) {
   if (!value) return undefined;
@@ -263,7 +249,7 @@ export default function AdminLogsPage() {
     ? "正在读取当前筛选条件下的请求记录。"
     : hasActiveFilters
       ? "当前筛选条件下没有请求记录，可以调整条件后重新查询。"
-      : "当前还没有日志写入。如果已经发起过请求，请检查 Cloudflare Queue 消费和 D1 logs 表。";
+      : "当前还没有请求日志写入。只有通过 API Key 调用 /api/v1/chat/completions、/api/v1/responses、/api/v1/messages 的请求会进入这里；如果已经调用过，请打开诊断查看 D1、Queue 和 logs 表状态。";
   const pageWindow = (() => {
     if (totalPages <= 7) return Array.from({ length: totalPages }, (_, i) => i + 1);
     if (page <= 3) return [1, 2, 3, 4, 5];
@@ -515,6 +501,9 @@ export default function AdminLogsPage() {
               <EmptyState
                 title={emptyLogsTitle}
                 description={emptyLogsDescription}
+                action={!loading && role === "admin" ? (
+                  <Button variant="ghost" onClick={() => router.push("/api/dashboard/diagnostics")}>查看诊断</Button>
+                ) : undefined}
               />
             )}
             <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/10 pt-4">

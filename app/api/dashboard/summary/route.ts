@@ -4,11 +4,7 @@ import { gatewayDb } from "@/lib/db";
 import { ensureWebUser } from "@/lib/guards";
 import { jsonError, jsonOk } from "@/lib/http";
 import { ensureLogsSchema } from "@/lib/logs-schema";
-
-function asNumber(value: unknown) {
-  const numberValue = typeof value === "number" ? value : Number(value ?? 0);
-  return Number.isFinite(numberValue) ? numberValue : 0;
-}
+import { asNumber } from "@/lib/utils";
 
 function estimateConcurrency(rows: Array<{ end_ms: number; latency_ms: number }>) {
   const now = Date.now();
