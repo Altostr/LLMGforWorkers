@@ -1,0 +1,149 @@
+export const dynamic = "force-dynamic";
+
+import { gatewayDb } from "@/lib/db";
+import { ensureWebUser } from "@/lib/guards";
+import { jsonOk } from "@/lib/http";
+
+function parseDateParam(value: string) {
+  const trimmed = value.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return null;
+  return trimmed;
+}
+
+function addOneDay(dateText: string) {
+  const date = new Date(`${dateText}T00:00:00Z`);
+  if (Number.isNaN(date.getTime())) return null;
+  date.setUTCDate(date.getUTCDate() + 1);
+  return date.toISOString().slice(0, 10);
+}
+
+export async function GET(request: Request) {
+  const guard = await ensureWebUser(request);
+  if ("error" in guard) return guard.error;
+
+  const isAdmin = guard.auth.user.role === "admin";
+  const url = new URL(request.url);
+  const limit = Math.min(200, Math.max(1, Number(url.searchParams.get("limit") ?? 50)));
+  const offset = Math.max(0, Number(url.searchParams.get("offset") ?? 0));
+  const user = (url.searchParams.get("user") ?? "").trim();
+  const model = (url.searchParams.get("model") ?? "").trim();
+  const channel = (url.searchParams.get("channel") ?? "").trim();
+  const ip = (url.searchParams.get("ip") ?? "").trim();
+  const startDate = parseDateParam(url.searchParams.get("start_date") ?? "");
+  const endDate = parseDateParam(url.searchParams.get("end_date") ?? "");
+
+  const whereClauses: string[] = [];
+  const whereArgs: Array<string | number> = [];
+
+  if (!isAdmin) {
+    whereClauses.push("l.user_id = ?");
+    whereArgs.push(guard.auth.user.id);
+  } else if (user) {
+    whereClauses.push("u.username LIKE ?");
+    whereArgs.push(`%${user}%`);
+  }
+
+  if (model) {
+    whereClauses.push("(l.model_alias LIKE ? OR l.real_model LIKE ?)");
+    whereArgs.push(`%${model}%`, `%${model}%`);
+  }
+
+  if (channel) {
+    whereClauses.push("c.name LIKE ?");
+    whereArgs.push(`%${channel}%`);
+  }
+
+  if (ip) {
+    whereClauses.push("l.client_ip LIKE ?");
+    whereArgs.push(`%${ip}%`);
+  }
+
+  if (startDate) {
+    whereClauses.push("l.created_at >= ?");
+    whereArgs.push(`${startDate} 00:00:00`);
+  }
+
+  if (endDate) {
+    const nextDate = addOneDay(endDate);
+    if (nextDate) {
+      whereClauses.push("l.created_at < ?");
+      whereArgs.push(`${nextDate} 00:00:00`);
+    }
+  }
+
+  const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
+
+  const rows = await gatewayDb.all(
+    `SELECT
+         l.id, l.user_id, u.username, l.key_id, l.channel_id,
+         c.name AS channel_name,
+         l.model_alias, l.real_model, l.stream, l.status_code,
+         l.estimated_tokens, l.prompt_tokens, l.completion_tokens, l.total_tokens,
+         l.latency_ms, l.first_token_latency_ms, l.output_tps, l.route_attempts, l.attempted_channels,
+         l.error_message, l.client_ip, l.created_at
+       FROM logs l
+       LEFT JOIN users u ON u.id = l.user_id
+       LEFT JOIN channels c ON c.id = l.channel_id
+       ${whereSql}
+       ORDER BY l.id DESC
+       LIMIT ? OFFSET ?`,
+    ...whereArgs,
+    limit,
+    offset,
+  );
+
+  const data = isAdmin
+    ? rows
+    : rows.map((row) => {
+        const next = { ...(row as Record<string, unknown>) };
+        delete next.username;
+        delete next.channel_name;
+        delete next.route_attempts;
+        delete next.attempted_channels;
+        return next;
+      });
+
+  const total = await gatewayDb.get<{ total: number }>(
+    `SELECT COUNT(*) AS total
+       FROM logs l
+       LEFT JOIN users u ON u.id = l.user_id
+       LEFT JOIN channels c ON c.id = l.channel_id
+       ${whereSql}`,
+    ...whereArgs,
+  ) as { total: number };
+
+  const summary = await gatewayDb.get<{
+    total_requests: number;
+    failed_requests: number;
+    total_tokens: number;
+    avg_latency_ms: number;
+    avg_first_token_latency_ms: number;
+    avg_output_tps: number;
+  }>(
+    `SELECT
+         COUNT(*) AS total_requests,
+         SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) AS failed_requests,
+         COALESCE(SUM(total_tokens), 0) AS total_tokens,
+         COALESCE(AVG(latency_ms), 0) AS avg_latency_ms,
+         COALESCE(AVG(first_token_latency_ms), 0) AS avg_first_token_latency_ms,
+         COALESCE(AVG(output_tps), 0) AS avg_output_tps
+       FROM logs l
+       LEFT JOIN users u ON u.id = l.user_id
+       LEFT JOIN channels c ON c.id = l.channel_id
+       ${whereSql}`,
+    ...whereArgs,
+  ) as {
+    total_requests: number;
+    failed_requests: number;
+    total_tokens: number;
+    avg_latency_ms: number;
+    avg_first_token_latency_ms: number;
+    avg_output_tps: number;
+  };
+
+  return jsonOk({
+    summary,
+    data,
+    paging: { limit, offset, total: total.total },
+  });
+}

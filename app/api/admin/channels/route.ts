@@ -1,0 +1,109 @@
+export const dynamic = "force-dynamic";
+
+import { z } from "zod";
+import { gatewayDb } from "@/lib/db";
+import { ensureAdmin } from "@/lib/guards";
+import { jsonError, jsonOk } from "@/lib/http";
+import { GATEWAY_PROTOCOLS, normalizeSupportedProtocols, stringifySupportedProtocols } from "@/lib/protocols";
+
+const createSchema = z.object({
+  name: z.string().min(1),
+  base_url: z.string().url(),
+  api_key: z.string().min(1),
+  supported_protocols: z.array(z.enum(GATEWAY_PROTOCOLS)).min(1).optional(),
+  enabled: z.boolean().optional(),
+  weight: z.number().int().min(1).optional(),
+  max_concurrency: z.number().int().min(1).optional(),
+  timeout: z.number().int().min(1).optional(),
+  models: z
+    .array(
+      z.object({
+        alias: z.string().min(1),
+        real_model: z.string().min(1),
+        upstream_protocol: z.enum(GATEWAY_PROTOCOLS).optional(),
+        is_public: z.boolean().optional(),
+        enabled: z.boolean().optional(),
+        weight: z.number().int().min(1).optional(),
+      }),
+    )
+    .optional(),
+});
+
+export async function GET(request: Request) {
+  const guard = await ensureAdmin(request);
+  if ("error" in guard) return guard.error;
+
+  const channels = await gatewayDb.all<Record<string, unknown> & { id: number }>("SELECT * FROM channels WHERE deleted_at IS NULL ORDER BY id DESC");
+  const models = await gatewayDb.all<{
+    id: number;
+    alias: string;
+    real_model: string;
+    channel_id: number;
+    upstream_protocol: string;
+    is_public: number;
+    enabled: number;
+    weight: number;
+    created_at: string;
+  }>("SELECT id, alias, real_model, channel_id, upstream_protocol, is_public, enabled, weight, created_at FROM models WHERE deleted_at IS NULL ORDER BY id DESC");
+
+  const grouped = new Map<number, typeof models>();
+  for (const model of models) {
+    const list = grouped.get(model.channel_id) ?? [];
+    list.push(model);
+    grouped.set(model.channel_id, list);
+  }
+
+  const rows = channels.map((channel) => ({
+    ...channel,
+    models: grouped.get(channel.id) ?? [],
+  }));
+  return jsonOk({ data: rows });
+}
+
+export async function POST(request: Request) {
+  const guard = await ensureAdmin(request);
+  if ("error" in guard) return guard.error;
+
+  const body = await request.json().catch(() => null);
+  const parsed = createSchema.safeParse(body);
+  if (!parsed.success) return jsonError("请求参数不正确", 400);
+
+  const supportedProtocols = normalizeSupportedProtocols(parsed.data.supported_protocols);
+  for (const model of parsed.data.models ?? []) {
+    const upstreamProtocol = model.upstream_protocol ?? supportedProtocols[0] ?? "chat_completions";
+    if (!supportedProtocols.includes(upstreamProtocol)) {
+      return jsonError("模型草稿包含渠道不支持的上游协议", 400);
+    }
+  }
+
+  const result = await gatewayDb.run(
+    `INSERT INTO channels (name, base_url, api_key, supported_protocols, enabled, weight, max_concurrency, timeout)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    parsed.data.name,
+    parsed.data.base_url,
+    parsed.data.api_key,
+    stringifySupportedProtocols(supportedProtocols),
+    parsed.data.enabled === false ? 0 : 1,
+    parsed.data.weight ?? 1,
+    parsed.data.max_concurrency ?? 64,
+    parsed.data.timeout ?? 60,
+  );
+
+  const channelId = Number(result.lastInsertRowid);
+  await gatewayDb.batch((parsed.data.models ?? []).map((model) => ({
+    sql: `INSERT INTO models (alias, real_model, channel_id, upstream_protocol, is_public, enabled, weight)
+          VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    params: [
+      model.alias,
+      model.real_model,
+      channelId,
+      model.upstream_protocol ?? supportedProtocols[0] ?? "chat_completions",
+      model.is_public === false ? 0 : 1,
+      model.enabled === false ? 0 : 1,
+      model.weight ?? 1,
+    ],
+  })));
+
+  const row = await gatewayDb.get("SELECT * FROM channels WHERE id = ? AND deleted_at IS NULL", channelId);
+  return jsonOk({ message: "渠道创建成功。", data: row }, 201);
+}

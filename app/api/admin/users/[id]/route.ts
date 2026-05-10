@@ -1,0 +1,206 @@
+export const dynamic = "force-dynamic";
+
+import { z } from "zod";
+import { hashPassword } from "@/lib/auth";
+import { gatewayDb } from "@/lib/db";
+import { ensureAdmin } from "@/lib/guards";
+import { jsonError, jsonOk } from "@/lib/http";
+import { parseAllowedModelAliases, stringifyAllowedModelAliases } from "@/lib/model-access";
+import { softDeleteUser } from "@/lib/services/soft-delete-service";
+import { USERNAME_SCHEMA } from "@/lib/username";
+
+const updateSchema = z.object({
+  username: USERNAME_SCHEMA.optional(),
+  role: z.enum(["admin", "user"]).optional(),
+  group_id: z.number().int().positive().nullable().optional(),
+  enabled: z.boolean().optional(),
+  rpm: z.number().int().min(-1).optional(),
+  qps: z.number().int().min(-1).optional(),
+  tpm: z.number().int().min(-1).optional(),
+  quota_tokens: z.number().int().min(-1).nullable().optional(),
+  quota_requests: z.number().int().min(-1).nullable().optional(),
+  allowed_model_aliases: z.array(z.string().min(1)).optional(),
+  note: z.string().max(500).nullable().optional(),
+  new_password: z.string().min(8).optional(),
+  reset_usage: z.enum(["all", "total"]).optional(),
+});
+
+function normalizeQuota(value: number | null | undefined) {
+  if (value === null || value === undefined || value < 0) return null;
+  return value;
+}
+
+export async function PUT(request: Request, context: { params: Promise<{ id: string }> }) {
+  const guard = await ensureAdmin(request);
+  if ("error" in guard) return guard.error;
+
+  const { id } = await context.params;
+  const body = await request.json().catch(() => null);
+  const parsed = updateSchema.safeParse(body);
+  if (!parsed.success) return jsonError("请求参数不正确", 400);
+
+  const existing = await gatewayDb.get<{
+    id: number;
+    username: string;
+    role: "admin" | "user";
+    group_id: number | null;
+    enabled: number;
+    rpm: number;
+    qps: number;
+    tpm: number;
+    quota_tokens: number | null;
+    quota_requests: number | null;
+    allowed_model_aliases: string;
+    note: string | null;
+  }>(
+    `SELECT id, username, role, group_id, enabled, rpm, qps, tpm,
+              quota_tokens, quota_requests,
+              allowed_model_aliases, note
+       FROM users WHERE id = ? AND deleted_at IS NULL`,
+    id,
+  );
+
+  if (!existing) return jsonError("用户不存在", 404);
+
+  if (parsed.data.username !== undefined && parsed.data.username !== existing.username) {
+    const duplicated = await gatewayDb.get<{ id: number }>(
+      "SELECT id FROM users WHERE username = ? AND id != ?",
+      parsed.data.username,
+      id,
+    );
+    if (duplicated) return jsonError("用户名已存在", 409);
+  }
+
+  if (parsed.data.group_id !== undefined && parsed.data.group_id !== null) {
+    const group = await gatewayDb.get<{ id: number }>(
+      "SELECT id FROM groups WHERE id = ? AND deleted_at IS NULL",
+      parsed.data.group_id,
+    );
+    if (!group) return jsonError("用户组不存在", 400);
+  }
+
+  const merged = {
+    ...existing,
+    ...parsed.data,
+    group_id:
+      parsed.data.group_id === undefined
+        ? existing.group_id
+        : parsed.data.group_id,
+    quota_tokens:
+      parsed.data.quota_tokens === undefined
+        ? existing.quota_tokens
+        : normalizeQuota(parsed.data.quota_tokens),
+    quota_requests:
+      parsed.data.quota_requests === undefined
+        ? existing.quota_requests
+        : normalizeQuota(parsed.data.quota_requests),
+    allowed_model_aliases:
+      parsed.data.allowed_model_aliases === undefined
+        ? existing.allowed_model_aliases
+        : stringifyAllowedModelAliases(parsed.data.allowed_model_aliases),
+    note:
+      parsed.data.note === undefined
+        ? existing.note
+        : parsed.data.note?.trim()
+          ? parsed.data.note.trim()
+          : null,
+    enabled:
+      parsed.data.enabled === undefined
+        ? existing.enabled
+        : parsed.data.enabled
+          ? 1
+          : 0,
+  };
+
+  const nextPasswordHash = parsed.data.new_password
+    ? await hashPassword(parsed.data.new_password)
+    : null;
+
+  if (nextPasswordHash) {
+    await gatewayDb.run(
+      `UPDATE users
+         SET username = ?, role = ?, group_id = ?, enabled = ?, rpm = ?, qps = ?, tpm = ?,
+             quota_tokens = ?, quota_requests = ?,
+             allowed_model_aliases = ?, note = ?, password_hash = ?
+         WHERE id = ?`,
+      merged.username,
+      merged.role,
+      merged.group_id,
+      merged.enabled,
+      merged.rpm,
+      merged.qps,
+      merged.tpm,
+      merged.quota_tokens,
+      merged.quota_requests,
+      merged.allowed_model_aliases,
+      merged.note,
+      nextPasswordHash,
+      id,
+    );
+  } else {
+    await gatewayDb.run(
+      `UPDATE users
+         SET username = ?, role = ?, group_id = ?, enabled = ?, rpm = ?, qps = ?, tpm = ?,
+             quota_tokens = ?, quota_requests = ?,
+             allowed_model_aliases = ?, note = ?
+         WHERE id = ?`,
+      merged.username,
+      merged.role,
+      merged.group_id,
+      merged.enabled,
+      merged.rpm,
+      merged.qps,
+      merged.tpm,
+      merged.quota_tokens,
+      merged.quota_requests,
+      merged.allowed_model_aliases,
+      merged.note,
+      id,
+    );
+  }
+
+  if (parsed.data.reset_usage === "all" || parsed.data.reset_usage === "total") {
+    await gatewayDb.batch([
+      { sql: "UPDATE users SET used_tokens = 0, used_requests = 0 WHERE id = ?", params: [id] },
+      { sql: "UPDATE keys SET used_tokens = 0, used_requests = 0 WHERE user_id = ? AND deleted_at IS NULL", params: [id] },
+    ]);
+  }
+
+  const row = await gatewayDb.get<{ allowed_model_aliases: string } & Record<string, unknown>>(
+    `SELECT u.id, u.username, u.role, u.group_id, g.name AS group_name,
+              u.rpm, u.qps, u.tpm, u.quota_tokens, u.quota_requests,
+              u.used_tokens, u.used_requests, u.allowed_model_aliases, u.note, u.enabled, u.created_at
+       FROM users u
+       LEFT JOIN groups g ON g.id = u.group_id AND g.deleted_at IS NULL
+       WHERE u.id = ? AND u.deleted_at IS NULL`,
+    id,
+  ) as { allowed_model_aliases: string } & Record<string, unknown>;
+
+  return jsonOk({
+    message: parsed.data.reset_usage ? "用量已重置。" : "用户更新成功。",
+    data: { ...row, allowed_model_aliases: parseAllowedModelAliases(row.allowed_model_aliases) },
+  });
+}
+
+export async function DELETE(request: Request, context: { params: Promise<{ id: string }> }) {
+  const guard = await ensureAdmin(request);
+  if ("error" in guard) return guard.error;
+
+  const { id } = await context.params;
+  const adminCount = await gatewayDb.get<{ count: number }>("SELECT COUNT(*) AS count FROM users WHERE role = 'admin' AND enabled = 1 AND deleted_at IS NULL") as {
+    count: number;
+  };
+
+  const target = await gatewayDb.get<{ role: "admin" | "user"; enabled: number }>(
+    "SELECT role, enabled FROM users WHERE id = ? AND deleted_at IS NULL",
+    id,
+  );
+
+  if (!target) return jsonError("用户不存在", 404);
+  if (target.role === "admin" && target.enabled === 1 && adminCount.count <= 1) {
+    return jsonError("不能删除最后一个启用的管理员", 400);
+  }
+
+  await softDeleteUser(id);
+  return jsonOk({ ok: true, message: "用户删除成功。" });
+}

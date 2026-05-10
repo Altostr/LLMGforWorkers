@@ -1,0 +1,189 @@
+export const dynamic = "force-dynamic";
+
+import { z } from "zod";
+import { hashPassword } from "@/lib/auth";
+import { gatewayDb } from "@/lib/db";
+import { ensureAdmin } from "@/lib/guards";
+import { jsonError, jsonOk } from "@/lib/http";
+import { getEffectiveLimits, getUserGroup } from "@/lib/effective-limits";
+import { parseAllowedModelAliases, stringifyAllowedModelAliases } from "@/lib/model-access";
+import { USERNAME_SCHEMA } from "@/lib/username";
+import { friendlyCredentialPayloadError } from "@/lib/validation";
+
+const createSchema = z.object({
+  username: USERNAME_SCHEMA,
+  password: z.string().min(8),
+  role: z.enum(["admin", "user"]).optional(),
+  group_id: z.number().int().positive().nullable().optional(),
+  enabled: z.boolean().optional(),
+  rpm: z.number().int().min(-1).optional(),
+  qps: z.number().int().min(-1).optional(),
+  tpm: z.number().int().min(-1).optional(),
+  quota_tokens: z.number().int().min(-1).nullable().optional(),
+  quota_requests: z.number().int().min(-1).nullable().optional(),
+  allowed_model_aliases: z.array(z.string().min(1)).optional(),
+  note: z.string().max(500).nullable().optional(),
+});
+
+function normalizeQuota(value: number | null | undefined) {
+  if (value === null || value === undefined || value < 0) return null;
+  return value;
+}
+
+const USER_SORT_COLUMNS = {
+  created_at: "u.id",
+  used_requests: "u.used_requests",
+  used_tokens: "u.used_tokens",
+  username: "u.username",
+} as const;
+
+export async function GET(request: Request) {
+  const guard = await ensureAdmin(request);
+  if ("error" in guard) return guard.error;
+
+  const url = new URL(request.url);
+  const limit = Math.min(100, Math.max(1, Number(url.searchParams.get("limit") ?? 20)));
+  const offset = Math.max(0, Number(url.searchParams.get("offset") ?? 0));
+  const keyword = (url.searchParams.get("keyword") ?? "").trim();
+  const groupParam = (url.searchParams.get("group_id") ?? "").trim();
+  const sortBy = (url.searchParams.get("sort_by") ?? "created_at").trim() as keyof typeof USER_SORT_COLUMNS;
+  const sortDir = (url.searchParams.get("sort_dir") ?? "desc").trim().toLowerCase() === "asc" ? "ASC" : "DESC";
+  const orderColumn = USER_SORT_COLUMNS[sortBy] ?? USER_SORT_COLUMNS.created_at;
+
+  let groupFilterId: number | null = null;
+  if (groupParam !== "" && groupParam !== "all") {
+    const groupId = Number(groupParam);
+    if (Number.isFinite(groupId) && groupId > 0) {
+      groupFilterId = groupId;
+    }
+  }
+
+  const whereParts = ["u.deleted_at IS NULL"];
+  const whereArgs: Array<string | number> = [];
+  if (keyword) {
+    whereParts.push("u.username LIKE ?");
+    whereArgs.push(`%${keyword}%`);
+  }
+  if (groupFilterId !== null) {
+    whereParts.push("u.group_id = ?");
+    whereArgs.push(groupFilterId);
+  }
+  const whereSql = `WHERE ${whereParts.join(" AND ")}`;
+
+  const rows = await gatewayDb.all<Record<string, unknown> & { allowed_model_aliases: string }>(
+    `SELECT u.id, u.username, u.role, u.group_id, g.name AS group_name,
+              u.rpm, u.qps, u.tpm, u.quota_tokens, u.quota_requests,
+              u.used_tokens, u.used_requests, u.allowed_model_aliases, u.note, u.enabled, u.created_at
+       FROM users u
+       LEFT JOIN groups g ON g.id = u.group_id AND g.deleted_at IS NULL
+       ${whereSql}
+       ORDER BY ${orderColumn} ${sortDir}, u.id DESC
+       LIMIT ? OFFSET ?`,
+    ...whereArgs,
+    limit,
+    offset,
+  );
+
+  const totalWhereParts = ["deleted_at IS NULL"];
+  const totalWhereArgs: Array<string | number> = [];
+  if (keyword) {
+    totalWhereParts.push("username LIKE ?");
+    totalWhereArgs.push(`%${keyword}%`);
+  }
+  if (groupFilterId !== null) {
+    totalWhereParts.push("group_id = ?");
+    totalWhereArgs.push(groupFilterId);
+  }
+  const total = await gatewayDb.get<{ total: number }>(
+    `SELECT COUNT(*) AS total
+       FROM users
+       WHERE ${totalWhereParts.join(" AND ")}`,
+    ...totalWhereArgs,
+  ) as { total: number };
+
+  const data = await Promise.all(rows.map(async (row) => {
+    const r = row as Record<string, unknown>;
+    const group = await getUserGroup((r.group_id as number | null) ?? null);
+    const effective = await getEffectiveLimits(r as any);
+    return {
+      ...r,
+      allowed_model_aliases: parseAllowedModelAliases(row.allowed_model_aliases),
+      group_rpm: group?.rpm ?? null,
+      group_qps: group?.qps ?? null,
+      group_tpm: group?.tpm ?? null,
+      group_quota_requests: group?.quota_requests ?? null,
+      group_quota_tokens: group?.quota_tokens ?? null,
+      effective_rpm: effective.rpm,
+      effective_qps: effective.qps,
+      effective_tpm: effective.tpm,
+      effective_quota_requests: effective.quota_requests,
+      effective_quota_tokens: effective.quota_tokens,
+    };
+  }));
+
+  return jsonOk({
+    data,
+    paging: { limit, offset, total: total.total ?? 0 },
+    sorting: {
+      sort_by: sortBy in USER_SORT_COLUMNS ? sortBy : "created_at",
+      sort_dir: sortDir.toLowerCase(),
+    },
+  });
+}
+
+export async function POST(request: Request) {
+  const guard = await ensureAdmin(request);
+  if ("error" in guard) return guard.error;
+
+  const body = await request.json().catch(() => null);
+  const parsed = createSchema.safeParse(body);
+  if (!parsed.success) return jsonError(friendlyCredentialPayloadError(parsed.error), 400);
+
+  const existing = await gatewayDb.get<{ id: number }>("SELECT id FROM users WHERE username = ?", parsed.data.username);
+  if (existing) return jsonError("用户名已存在", 409);
+
+  let groupId = parsed.data.group_id ?? null;
+  if (groupId === null) {
+    const defaultGroup = await gatewayDb.get<{ id: number }>("SELECT id FROM groups WHERE is_default = 1 AND deleted_at IS NULL");
+    groupId = defaultGroup?.id ?? null;
+  } else {
+    const group = await gatewayDb.get<{ id: number }>("SELECT id FROM groups WHERE id = ? AND deleted_at IS NULL", groupId);
+    if (!group) return jsonError("用户组不存在", 400);
+  }
+
+  const passwordHash = await hashPassword(parsed.data.password);
+  const result = await gatewayDb.run(
+    `INSERT INTO users (
+         username, password_hash, role, group_id, enabled,
+         rpm, qps, tpm, quota_tokens, quota_requests,
+         allowed_model_aliases, note
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    parsed.data.username,
+    passwordHash,
+    parsed.data.role ?? "user",
+    groupId,
+    parsed.data.enabled === false ? 0 : 1,
+    parsed.data.rpm ?? -1,
+    parsed.data.qps ?? -1,
+    parsed.data.tpm ?? -1,
+    normalizeQuota(parsed.data.quota_tokens),
+    normalizeQuota(parsed.data.quota_requests),
+    stringifyAllowedModelAliases(parsed.data.allowed_model_aliases ?? []),
+    parsed.data.note?.trim() ? parsed.data.note.trim() : null,
+  );
+
+  const row = await gatewayDb.get<{ allowed_model_aliases: string } & Record<string, unknown>>(
+    `SELECT u.id, u.username, u.role, u.group_id, g.name AS group_name,
+              u.rpm, u.qps, u.tpm, u.quota_tokens, u.quota_requests,
+              u.used_tokens, u.used_requests, u.allowed_model_aliases, u.note, u.enabled, u.created_at
+       FROM users u
+       LEFT JOIN groups g ON g.id = u.group_id AND g.deleted_at IS NULL
+       WHERE u.id = ? AND u.deleted_at IS NULL`,
+    result.lastInsertRowid,
+  ) as { allowed_model_aliases: string } & Record<string, unknown>;
+
+  return jsonOk({
+    message: "用户创建成功。",
+    data: { ...row, allowed_model_aliases: parseAllowedModelAliases(row.allowed_model_aliases) },
+  }, 201);
+}
