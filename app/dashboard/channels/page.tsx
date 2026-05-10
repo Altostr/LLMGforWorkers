@@ -43,8 +43,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/components/ui/toast";
 import { getApiMessage } from "@/lib/api-message";
-import { authedFetch } from "@/lib/client-auth";
-import { requireAdminDashboardProfile } from "@/lib/dashboard-client";
+import { authedFetch, clearSession, getOrFetchProfile } from "@/lib/client-auth";
 
 type Protocol = "chat_completions" | "responses" | "anthropic_messages";
 
@@ -167,7 +166,17 @@ export default function AdminChannelsPage() {
   const { toast } = useToast();
 
   async function ensureAdmin() {
-    return Boolean(await requireAdminDashboardProfile(router));
+    const profile = await getOrFetchProfile();
+    if (!profile) {
+      clearSession();
+      router.push("/login");
+      return false;
+    }
+    if (profile.role !== "admin") {
+      router.push("/dashboard/keys");
+      return false;
+    }
+    return true;
   }
 
   async function load() {

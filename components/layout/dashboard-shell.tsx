@@ -39,9 +39,9 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { useToast } from "@/components/ui/toast";
-import { authedFetch, clearSession, getCachedProfile, getOrFetchProfile } from "@/lib/client-auth";
+import { authedFetch, clearCachedProfile, clearSession, getCachedProfile, getOrFetchProfile } from "@/lib/client-auth";
 import { getApiMessage } from "@/lib/api-message";
-import { cn, formatLimit as formatSharedLimit } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 type Role = "admin" | "user";
 
@@ -95,12 +95,11 @@ export function DashboardShell({ role, title, subtitle, right, children }: Dashb
   const [newPassword, setNewPassword] = useState("");
 
   useEffect(() => {
-    if (initialProfile) return;
-
+    clearCachedProfile();
     void getOrFetchProfile().then((next) => {
       if (next) setProfileBrief(next);
     });
-  }, [initialProfile]);
+  }, []);
 
   function onLogout() {
     void fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" }).finally(() => {
@@ -114,7 +113,13 @@ export function DashboardShell({ role, title, subtitle, right, children }: Dashb
   }
 
   function formatLimit(value: number | null | undefined) {
-    return formatSharedLimit(value, 1);
+    if (value === null || value === undefined) return "-";
+    if (value < 0) return "∞";
+    const abs = Math.abs(value);
+    if (abs >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(1)}B`;
+    if (abs >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+    if (abs >= 1_000) return `${(value / 1_000).toFixed(1)}k`;
+    return String(value);
   }
 
   async function onChangePassword() {

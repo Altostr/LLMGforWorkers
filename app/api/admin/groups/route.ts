@@ -2,7 +2,6 @@ export const dynamic = "force-dynamic";
 
 import { z } from "zod";
 import { gatewayDb } from "@/lib/db";
-import { normalizeQuotaLimit } from "@/lib/effective-limits";
 import { ensureAdmin } from "@/lib/guards";
 import { jsonError, jsonOk } from "@/lib/http";
 import { parseAllowedModelAliases, stringifyAllowedModelAliases } from "@/lib/model-access";
@@ -18,6 +17,11 @@ const createSchema = z.object({
   allowed_model_aliases: z.array(z.string().min(1)).optional(),
   is_default: z.boolean().optional(),
 });
+
+function normalizeQuota(value: number | null | undefined) {
+  if (value === null || value === undefined || value < 0) return null;
+  return value;
+}
 
 export async function GET(request: Request) {
   const guard = await ensureAdmin(request);
@@ -76,8 +80,8 @@ export async function POST(request: Request) {
     parsed.data.qps ?? -1,
     parsed.data.rpm ?? -1,
     parsed.data.tpm ?? -1,
-    normalizeQuotaLimit(parsed.data.quota_requests),
-    normalizeQuotaLimit(parsed.data.quota_tokens),
+    normalizeQuota(parsed.data.quota_requests),
+    normalizeQuota(parsed.data.quota_tokens),
     stringifyAllowedModelAliases(parsed.data.allowed_model_aliases ?? []),
     setDefault ? 1 : 0,
   );

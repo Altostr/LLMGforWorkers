@@ -12,8 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/components/ui/toast";
 import { getApiMessage } from "@/lib/api-message";
-import { authedFetch } from "@/lib/client-auth";
-import { requireAdminDashboardProfile } from "@/lib/dashboard-client";
+import { authedFetch, clearSession, getOrFetchProfile } from "@/lib/client-auth";
 
 export default function AdminSettingsPage() {
   const router = useRouter();
@@ -25,7 +24,17 @@ export default function AdminSettingsPage() {
   const { toast } = useToast();
 
   async function ensureAdmin() {
-    return Boolean(await requireAdminDashboardProfile(router));
+    const profile = await getOrFetchProfile();
+    if (!profile) {
+      clearSession();
+      router.push("/login");
+      return false;
+    }
+    if (profile.role !== "admin") {
+      router.push("/dashboard/keys");
+      return false;
+    }
+    return true;
   }
 
   async function load() {

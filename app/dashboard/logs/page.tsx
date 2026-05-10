@@ -31,8 +31,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { authedFetch, clearSession, getCachedProfile, getOrFetchProfile } from "@/lib/client-auth";
-import { getApiMessage } from "@/lib/api-message";
-import { formatDuration, formatNumber, formatTokenCount } from "@/lib/utils";
+import { formatNumber, formatTokenCount } from "@/lib/utils";
 
 type LogRow = {
   id: number;
@@ -63,6 +62,20 @@ type Summary = {
   avg_first_token_latency_ms: number;
   avg_output_tps: number;
 };
+
+function formatDuration(ms: number | null | undefined) {
+  if (typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) return "-";
+  if (ms < 1000) return `${Math.round(ms)} ms`;
+
+  const sec = ms / 1000;
+  if (sec < 60) return `${sec.toFixed(2)} s`;
+
+  const min = sec / 60;
+  if (min < 60) return `${min.toFixed(2)} m`;
+
+  const hour = min / 60;
+  return `${hour.toFixed(2)} h`;
+}
 
 function parseDateValue(value: string) {
   if (!value) return undefined;
@@ -138,7 +151,6 @@ export default function AdminLogsPage() {
   const [rows, setRows] = useState<LogRow[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
   const [role, setRole] = useState<"admin" | "user">(() => initialProfile?.role ?? getCachedProfile()?.role ?? "user");
   const [page, setPage] = useState(1);
   const pageSize = 20;
@@ -164,67 +176,48 @@ export default function AdminLogsPage() {
   ) {
     const requestSeq = ++loadSeqRef.current;
     setLoading(true);
-    setError("");
 
-    try {
-      const profile = await getOrFetchProfile();
-      if (requestSeq !== loadSeqRef.current) return;
-      if (!profile) {
-        clearSession();
-        router.replace("/login");
-        return;
-      }
-      const nextRole = profile.role as "admin" | "user";
-      setRole(nextRole);
-
-      const nextFilterUser = filters?.user ?? filterUser;
-      const nextFilterModel = filters?.model ?? filterModel;
-      const nextFilterChannel = filters?.channel ?? filterChannel;
-      const nextFilterIp = filters?.ip ?? filterIp;
-      const nextFilterStartDate = filters?.startDate ?? filterStartDate;
-      const nextFilterEndDate = filters?.endDate ?? filterEndDate;
-      const offset = (nextPage - 1) * pageSize;
-      const params = new URLSearchParams({
-        limit: String(pageSize),
-        offset: String(offset),
-      });
-      if (nextRole === "admin" && nextFilterUser.trim()) params.set("user", nextFilterUser.trim());
-      if (nextFilterModel.trim()) params.set("model", nextFilterModel.trim());
-      if (nextRole === "admin" && nextFilterChannel.trim()) params.set("channel", nextFilterChannel.trim());
-      if (nextFilterIp.trim()) params.set("ip", nextFilterIp.trim());
-      if (nextFilterStartDate) params.set("start_date", nextFilterStartDate);
-      if (nextFilterEndDate) params.set("end_date", nextFilterEndDate);
-
-      const response = await authedFetch(`/api/dashboard/logs?${params.toString()}`);
-      if (requestSeq !== loadSeqRef.current) return;
-      const data = await response.json().catch(() => null);
-      if (!response.ok) {
-        if (response.status === 401) {
-          clearSession();
-          router.replace("/login");
-          return;
-        }
-        setRows([]);
-        setSummary(null);
-        setTotal(0);
-        setError(getApiMessage(data, "请求日志加载失败，请检查 D1 logs 表和日志队列写入状态。"));
-        return;
-      }
-
-      if (requestSeq !== loadSeqRef.current) return;
-      setRows(Array.isArray(data?.data) ? data.data : []);
-      setSummary(data?.summary ?? null);
-      setTotal(data?.paging?.total ?? 0);
-      setPage(nextPage);
-    } catch {
-      if (requestSeq !== loadSeqRef.current) return;
-      setRows([]);
-      setSummary(null);
-      setTotal(0);
-      setError("请求日志加载失败，请稍后重试。");
-    } finally {
-      if (requestSeq === loadSeqRef.current) setLoading(false);
+    const profile = await getOrFetchProfile();
+    if (requestSeq !== loadSeqRef.current) return;
+    if (!profile) {
+      clearSession();
+      router.replace("/login");
+      return;
     }
+    const nextRole = profile.role as "admin" | "user";
+    setRole(nextRole);
+
+    const nextFilterUser = filters?.user ?? filterUser;
+    const nextFilterModel = filters?.model ?? filterModel;
+    const nextFilterChannel = filters?.channel ?? filterChannel;
+    const nextFilterIp = filters?.ip ?? filterIp;
+    const nextFilterStartDate = filters?.startDate ?? filterStartDate;
+    const nextFilterEndDate = filters?.endDate ?? filterEndDate;
+    const offset = (nextPage - 1) * pageSize;
+    const params = new URLSearchParams({
+      limit: String(pageSize),
+      offset: String(offset),
+    });
+    if (nextRole === "admin" && nextFilterUser.trim()) params.set("user", nextFilterUser.trim());
+    if (nextFilterModel.trim()) params.set("model", nextFilterModel.trim());
+    if (nextRole === "admin" && nextFilterChannel.trim()) params.set("channel", nextFilterChannel.trim());
+    if (nextFilterIp.trim()) params.set("ip", nextFilterIp.trim());
+    if (nextFilterStartDate) params.set("start_date", nextFilterStartDate);
+    if (nextFilterEndDate) params.set("end_date", nextFilterEndDate);
+
+    const response = await authedFetch(`/api/dashboard/logs?${params.toString()}`);
+    if (requestSeq !== loadSeqRef.current) return;
+    if (!response.ok) {
+      setLoading(false);
+      return;
+    }
+    const data = await response.json();
+    if (requestSeq !== loadSeqRef.current) return;
+    setRows(data.data);
+    setSummary(data.summary);
+    setTotal(data.paging?.total ?? 0);
+    setPage(nextPage);
+    setLoading(false);
   }
 
   useEffect(() => {
@@ -232,24 +225,6 @@ export default function AdminLogsPage() {
   }, []);
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
-  const hasActiveFilters = Boolean(
-    filterUser.trim() ||
-    filterModel.trim() ||
-    filterChannel.trim() ||
-    filterIp.trim() ||
-    filterStartDate ||
-    filterEndDate,
-  );
-  const emptyLogsTitle = loading
-    ? "正在加载日志"
-    : hasActiveFilters
-      ? "没有匹配的请求日志"
-      : "暂无请求日志";
-  const emptyLogsDescription = loading
-    ? "正在读取当前筛选条件下的请求记录。"
-    : hasActiveFilters
-      ? "当前筛选条件下没有请求记录，可以调整条件后重新查询。"
-      : "当前还没有请求日志写入。只有通过 API Key 调用 /api/v1/chat/completions、/api/v1/responses、/api/v1/messages 的请求会进入这里；如果已经调用过，请打开诊断查看 D1、Queue 和 logs 表状态。";
   const pageWindow = (() => {
     if (totalPages <= 7) return Array.from({ length: totalPages }, (_, i) => i + 1);
     if (page <= 3) return [1, 2, 3, 4, 5];
@@ -415,21 +390,6 @@ export default function AdminLogsPage() {
           <MetricCard label="平均输出速度" value={`${(summary?.avg_output_tps ?? 0).toFixed(2)} t/s`} hint="用于判断上游模型质量" icon={Clock3} />
         </div>
 
-        {error ? (
-          <EmptyState
-            title="请求日志加载失败"
-            description={error}
-            action={(
-              <div className="flex flex-wrap items-center justify-center gap-2">
-                <Button variant="outline" disabled={loading} onClick={() => void load(page)}>重试</Button>
-                {role === "admin" ? (
-                  <Button variant="ghost" onClick={() => router.push("/api/dashboard/diagnostics")}>查看诊断</Button>
-                ) : null}
-              </div>
-            )}
-          />
-        ) : null}
-
         <Card>
           <CardHeader className="pb-3">
             <SectionTitle title="筛选条件" />
@@ -491,19 +451,10 @@ export default function AdminLogsPage() {
                   emptyText={loading ? "加载中..." : "暂无日志"}
                 />
               </div>
-            ) : error ? (
-              <EmptyState
-                title="请求日志加载失败"
-                description="上方错误信息包含接口返回原因，修复后可重新查询。"
-                action={<Button variant="outline" disabled={loading} onClick={() => void load(page)}>重试</Button>}
-              />
             ) : (
               <EmptyState
-                title={emptyLogsTitle}
-                description={emptyLogsDescription}
-                action={!loading && role === "admin" ? (
-                  <Button variant="ghost" onClick={() => router.push("/api/dashboard/diagnostics")}>查看诊断</Button>
-                ) : undefined}
+                title={loading ? "正在加载日志" : "暂无日志数据"}
+                description={loading ? "正在读取当前筛选条件下的请求记录。" : "可以调整筛选条件或等待新请求进入系统。"}
               />
             )}
             <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/10 pt-4">

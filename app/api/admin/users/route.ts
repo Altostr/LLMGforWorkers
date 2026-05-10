@@ -5,7 +5,7 @@ import { hashPassword } from "@/lib/auth";
 import { gatewayDb, type DbUser } from "@/lib/db";
 import { ensureAdmin } from "@/lib/guards";
 import { jsonError, jsonOk } from "@/lib/http";
-import { getEffectiveLimits, getUserGroup, normalizeQuotaLimit } from "@/lib/effective-limits";
+import { getEffectiveLimits, getUserGroup } from "@/lib/effective-limits";
 import { parseAllowedModelAliases, stringifyAllowedModelAliases } from "@/lib/model-access";
 import { USERNAME_SCHEMA } from "@/lib/username";
 import { friendlyCredentialPayloadError } from "@/lib/validation";
@@ -24,6 +24,11 @@ const createSchema = z.object({
   allowed_model_aliases: z.array(z.string().min(1)).optional(),
   note: z.string().max(500).nullable().optional(),
 });
+
+function normalizeQuota(value: number | null | undefined) {
+  if (value === null || value === undefined || value < 0) return null;
+  return value;
+}
 
 const USER_SORT_COLUMNS = {
   created_at: "u.id",
@@ -181,8 +186,8 @@ export async function POST(request: Request) {
     parsed.data.rpm ?? -1,
     parsed.data.qps ?? -1,
     parsed.data.tpm ?? -1,
-    normalizeQuotaLimit(parsed.data.quota_tokens),
-    normalizeQuotaLimit(parsed.data.quota_requests),
+    normalizeQuota(parsed.data.quota_tokens),
+    normalizeQuota(parsed.data.quota_requests),
     stringifyAllowedModelAliases(parsed.data.allowed_model_aliases ?? []),
     parsed.data.note?.trim() ? parsed.data.note.trim() : null,
   );

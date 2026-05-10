@@ -1,17 +1,71 @@
 export const dynamic = "force-dynamic";
 
+import { gatewayDb } from "@/lib/db";
 import { ensureUser } from "@/lib/guards";
 import { jsonOk } from "@/lib/http";
-import { getLegacyChatLogs } from "@/lib/log-queries";
-import { parseBoundedInt } from "@/lib/utils";
 
 export async function GET(request: Request) {
   const guard = await ensureUser(request);
   if ("error" in guard) return guard.error;
 
   const url = new URL(request.url);
-  const limit = parseBoundedInt(url.searchParams.get("limit"), 50, 1, 200);
-  const offset = parseBoundedInt(url.searchParams.get("offset"), 0, 0, Number.MAX_SAFE_INTEGER);
+  const limit = Math.min(200, Math.max(1, Number(url.searchParams.get("limit") ?? 50)));
+  const offset = Math.max(0, Number(url.searchParams.get("offset") ?? 0));
 
-  return jsonOk(await getLegacyChatLogs({ userId: guard.auth.user.id, limit, offset }));
+  const rows = await gatewayDb.all(
+    `SELECT
+         l.id, l.user_id, u.username, l.key_id, l.channel_id,
+         c.name AS channel_name,
+         l.model_alias, l.real_model, l.stream, l.status_code,
+         l.estimated_tokens, l.prompt_tokens, l.completion_tokens, l.total_tokens,
+         l.latency_ms, l.first_token_latency_ms, l.output_tps, l.token_source,
+         l.error_message, l.created_at
+       FROM logs l
+       LEFT JOIN users u ON u.id = l.user_id
+       LEFT JOIN channels c ON c.id = l.channel_id
+       WHERE l.user_id = ?
+       ORDER BY l.id DESC
+       LIMIT ? OFFSET ?`,
+    guard.auth.user.id,
+    limit,
+    offset,
+  );
+
+  const total = await gatewayDb.get<{ total: number }>(
+    "SELECT COUNT(*) AS total FROM logs WHERE user_id = ?",
+    guard.auth.user.id,
+  ) as { total: number };
+
+  const summary = await gatewayDb.get<{
+    total_requests: number;
+    failed_requests: number;
+    total_tokens: number;
+    avg_latency_ms: number;
+    avg_first_token_latency_ms: number;
+    avg_output_tps: number;
+  }>(
+    `SELECT
+         COUNT(*) AS total_requests,
+         SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) AS failed_requests,
+         COALESCE(SUM(total_tokens), 0) AS total_tokens,
+         COALESCE(AVG(latency_ms), 0) AS avg_latency_ms,
+         COALESCE(AVG(first_token_latency_ms), 0) AS avg_first_token_latency_ms,
+         COALESCE(AVG(output_tps), 0) AS avg_output_tps
+       FROM logs
+       WHERE user_id = ?`,
+    guard.auth.user.id,
+  ) as {
+    total_requests: number;
+    failed_requests: number;
+    total_tokens: number;
+    avg_latency_ms: number;
+    avg_first_token_latency_ms: number;
+    avg_output_tps: number;
+  };
+
+  return jsonOk({
+    summary,
+    data: rows,
+    paging: { limit, offset, total: total.total },
+  });
 }

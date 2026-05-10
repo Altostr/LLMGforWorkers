@@ -1,9 +1,7 @@
 "use client";
 
-/* eslint-disable react-hooks/set-state-in-effect */
-
 import { type ColumnDef } from "@tanstack/react-table";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Activity,
@@ -28,8 +26,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { DataTable } from "@/components/ui/data-table";
 import { authedFetch, clearSession, getCachedProfile, getOrFetchProfile } from "@/lib/client-auth";
-import { getApiMessage } from "@/lib/api-message";
-import { formatDuration, formatNumber, formatTokenCount } from "@/lib/utils";
+import { formatNumber, formatTokenCount } from "@/lib/utils";
 
 type Role = "admin" | "user";
 
@@ -52,6 +49,16 @@ type Summary = {
   recent_logs: Array<{ id: number; model_name: string; status_code: number; total_tokens: number; latency_ms: number; created_at: string }>;
 };
 
+function formatDuration(ms: number | null | undefined) {
+  if (typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) return "-";
+  if (ms < 1000) return `${Math.round(ms)} ms`;
+  const sec = ms / 1000;
+  if (sec < 60) return `${sec.toFixed(2)} s`;
+  const min = sec / 60;
+  if (min < 60) return `${min.toFixed(2)} m`;
+  return `${(min / 60).toFixed(2)} h`;
+}
+
 export default function DashboardHomePage() {
   const router = useRouter();
   const initialProfile = useAuthProfile();
@@ -59,20 +66,15 @@ export default function DashboardHomePage() {
   const [loading, setLoading] = useState(true);
   const [role, setRole] = useState<Role>(() => (initialProfile?.role as Role | undefined) ?? (getCachedProfile()?.role as Role | undefined) ?? "user");
   const [summary, setSummary] = useState<Summary | null>(null);
-  const [error, setError] = useState("");
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => setChartReady(true));
     return () => window.cancelAnimationFrame(frame);
   }, []);
 
-  const loadSummary = useCallback(async () => {
-    setLoading(true);
-    setError("");
-
-    try {
-      const [profile, summaryResp] = await Promise.all([getOrFetchProfile(), authedFetch("/api/dashboard/summary")]);
-
+  useEffect(() => {
+    void Promise.all([getOrFetchProfile(), authedFetch("/api/dashboard/summary")])
+      .then(async ([profile, summaryResp]) => {
         if (!profile) {
           clearSession();
           router.replace("/login");
@@ -80,36 +82,13 @@ export default function DashboardHomePage() {
         }
         setRole(profile.role as Role);
 
-        const summaryData = await summaryResp.json().catch(() => null);
-        if (!summaryResp.ok) {
-          if (summaryResp.status === 401) {
-            clearSession();
-            router.replace("/login");
-            return;
-          }
-          setSummary(null);
-          setError(getApiMessage(summaryData, "统计数据加载失败，请检查 D1 logs 表和日志队列写入状态。"));
-          return;
+        if (summaryResp.ok) {
+          const summaryData = await summaryResp.json();
+          setSummary(summaryData.data ?? null);
         }
-
-        if (!summaryData?.data) {
-          setSummary(null);
-          setError("统计接口返回格式异常。");
-          return;
-        }
-
-        setSummary(summaryData.data);
-      } catch {
-        setSummary(null);
-        setError("统计数据加载失败，请稍后重试。");
-      } finally {
-        setLoading(false);
-      }
+      })
+      .finally(() => setLoading(false));
   }, [router]);
-
-  useEffect(() => {
-    void loadSummary();
-  }, [loadSummary]);
 
   const topModelColumns = useMemo<Array<ColumnDef<{ model_name: string; request_count: number; total_tokens: number }>>>(
     () => [
@@ -248,21 +227,6 @@ export default function DashboardHomePage() {
             />
           ))}
         </div>
-
-        {error ? (
-          <EmptyState
-            title="统计数据加载失败"
-            description={error}
-            action={(
-              <div className="flex flex-wrap items-center justify-center gap-2">
-                <Button variant="outline" disabled={loading} onClick={() => void loadSummary()}>重试</Button>
-                {isAdmin ? (
-                  <Button variant="ghost" onClick={() => router.push("/api/dashboard/diagnostics")}>查看诊断</Button>
-                ) : null}
-              </div>
-            )}
-          />
-        ) : null}
 
         <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(280px,1fr)]">
           <Card>

@@ -176,25 +176,22 @@ export async function handleGatewayProtocolRequest(request: Request, inboundProt
   const auth = authResult.context;
 
   const logRejected = async (statusCode: number, message: string, alias: string | null, estimatedTokens?: number) => {
-    await insertChatLog(
-      {
-        user_id: auth.user.id,
-        key_id: auth.key.id,
-        channel_id: null,
-        model_alias: alias,
-        real_model: null,
-        stream: false,
-        status_code: statusCode,
-        estimated_tokens: estimatedTokens ?? null,
-        prompt_tokens: 0,
-        completion_tokens: 0,
-        total_tokens: 0,
-        latency_ms: Date.now() - startedAt,
-        error_message: message,
-        client_ip: clientIp,
-      },
-      { persistence: "confirmed_d1" },
-    );
+    await insertChatLog({
+      user_id: auth.user.id,
+      key_id: auth.key.id,
+      channel_id: null,
+      model_alias: alias,
+      real_model: null,
+      stream: false,
+      status_code: statusCode,
+      estimated_tokens: estimatedTokens ?? null,
+      prompt_tokens: 0,
+      completion_tokens: 0,
+      total_tokens: 0,
+      latency_ms: Date.now() - startedAt,
+      error_message: message,
+      client_ip: clientIp,
+    });
   };
 
   const contentLength = parseInt(request.headers.get("content-length") || "0");
@@ -306,29 +303,26 @@ export async function handleGatewayProtocolRequest(request: Request, inboundProt
 
   const picked = await pickRoute();
   if (!picked.ok) {
-    await insertChatLog(
-      {
-        user_id: auth.user.id,
-        key_id: auth.key.id,
-        channel_id: picked.route?.channel.id ?? null,
-        model_alias: alias,
-        real_model: picked.route?.model.real_model ?? null,
-        stream,
-        status_code: 502,
-        estimated_tokens: estimatedTokens,
-        prompt_tokens: null,
-        completion_tokens: 0,
-        total_tokens: estimatedTokens,
-        latency_ms: Date.now() - startedAt,
-        first_token_latency_ms: null,
-        output_tps: null,
-        route_attempts: Math.max(1, picked.attemptedChannels.length),
-        attempted_channels: picked.attemptedChannelNames.join(" -> "),
-        error_message: "Upstream request failed.",
-        client_ip: clientIp,
-      },
-      { persistence: "confirmed_d1" },
-    );
+    await insertChatLog({
+      user_id: auth.user.id,
+      key_id: auth.key.id,
+      channel_id: picked.route?.channel.id ?? null,
+      model_alias: alias,
+      real_model: picked.route?.model.real_model ?? null,
+      stream,
+      status_code: 502,
+      estimated_tokens: estimatedTokens,
+      prompt_tokens: null,
+      completion_tokens: 0,
+      total_tokens: estimatedTokens,
+      latency_ms: Date.now() - startedAt,
+      first_token_latency_ms: null,
+      output_tps: null,
+      route_attempts: Math.max(1, picked.attemptedChannels.length),
+      attempted_channels: picked.attemptedChannelNames.join(" -> "),
+      error_message: "Upstream request failed.",
+      client_ip: clientIp,
+    });
     return withQuotaHeaders(jsonError("Upstream request failed.", 502, {
       type: "upstream_error",
       param: "None",
@@ -344,29 +338,26 @@ export async function handleGatewayProtocolRequest(request: Request, inboundProt
       const text = await upstream.text().catch(() => "");
       const upstreamError = parseUpstreamError(text, upstream.status);
       lease.complete({ ok: false, latencyMs: Date.now() - startedAt });
-      await insertChatLog(
-        {
-          user_id: auth.user.id,
-          key_id: auth.key.id,
-          channel_id: route.channel.id,
-          model_alias: alias,
-          real_model: route.model.real_model,
-          stream: true,
-          status_code: upstream.status,
-          estimated_tokens: estimatedTokens,
-          prompt_tokens: localPromptTokens,
-          completion_tokens: 0,
-          total_tokens: localPromptTokens,
-          latency_ms: Date.now() - startedAt,
-          first_token_latency_ms: null,
-          output_tps: null,
-          route_attempts: Math.max(1, attemptedChannels.length),
-          attempted_channels: attemptedChannelNames.join(" -> "),
-          error_message: upstreamError.message,
-          client_ip: clientIp,
-        },
-        { persistence: "confirmed_d1" },
-      );
+      await insertChatLog({
+        user_id: auth.user.id,
+        key_id: auth.key.id,
+        channel_id: route.channel.id,
+        model_alias: alias,
+        real_model: route.model.real_model,
+        stream: true,
+        status_code: upstream.status,
+        estimated_tokens: estimatedTokens,
+        prompt_tokens: localPromptTokens,
+        completion_tokens: 0,
+        total_tokens: localPromptTokens,
+        latency_ms: Date.now() - startedAt,
+        first_token_latency_ms: null,
+        output_tps: null,
+        route_attempts: Math.max(1, attemptedChannels.length),
+        attempted_channels: attemptedChannelNames.join(" -> "),
+        error_message: upstreamError.message,
+        client_ip: clientIp,
+      });
       const errorBody = route.model.upstream_protocol === inboundProtocol
         ? text
         : buildErrorResponseBody(upstreamError.message, upstream.status, inboundProtocol, upstreamError.type, upstreamError.code);
@@ -492,28 +483,25 @@ export async function handleGatewayProtocolRequest(request: Request, inboundProt
   if (upstream.status >= 400) {
     const upstreamError = parseUpstreamError(rawText, upstream.status);
     lease.complete({ ok: false, latencyMs: Date.now() - startedAt });
-    await insertChatLog(
-      {
-        user_id: auth.user.id,
-        key_id: auth.key.id,
-        channel_id: route.channel.id,
-        model_alias: alias,
-        real_model: route.model.real_model,
-        stream: false,
-        status_code: upstream.status,
-        estimated_tokens: estimatedTokens,
-        prompt_tokens: localPromptTokens,
-        completion_tokens: 0,
-        total_tokens: localPromptTokens,
-        latency_ms: Date.now() - startedAt,
-        output_tps: null,
-        route_attempts: Math.max(1, attemptedChannels.length),
-        attempted_channels: attemptedChannelNames.join(" -> "),
-        error_message: upstreamError.message,
-        client_ip: clientIp,
-      },
-      { persistence: "confirmed_d1" },
-    );
+    await insertChatLog({
+      user_id: auth.user.id,
+      key_id: auth.key.id,
+      channel_id: route.channel.id,
+      model_alias: alias,
+      real_model: route.model.real_model,
+      stream: false,
+      status_code: upstream.status,
+      estimated_tokens: estimatedTokens,
+      prompt_tokens: localPromptTokens,
+      completion_tokens: 0,
+      total_tokens: localPromptTokens,
+      latency_ms: Date.now() - startedAt,
+      output_tps: null,
+      route_attempts: Math.max(1, attemptedChannels.length),
+      attempted_channels: attemptedChannelNames.join(" -> "),
+      error_message: upstreamError.message,
+      client_ip: clientIp,
+    });
     const errorBody = route.model.upstream_protocol === inboundProtocol
       ? rawText
       : buildErrorResponseBody(upstreamError.message, upstream.status, inboundProtocol, upstreamError.type, upstreamError.code);

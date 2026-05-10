@@ -1,5 +1,4 @@
 import { createLogStatement, type CreateLogInput, type LogSqlParam } from "./chat-log-statement";
-import { createD1LogsSchemaDatabase, ensureLogsSchema } from "./logs-schema";
 
 export const CHAT_LOG_QUEUE_MESSAGE_TYPE = "chat_log";
 export const CHAT_LOG_QUEUE_MESSAGE_VERSION = 1;
@@ -37,7 +36,6 @@ type D1Result<T = unknown> = {
 
 type D1PreparedStatement = {
   bind(...values: LogSqlParam[]): D1PreparedStatement;
-  all<T = unknown>(): Promise<D1Result<T>>;
   run<T = unknown>(): Promise<D1Result<T>>;
 };
 
@@ -45,16 +43,6 @@ type D1DatabaseLike = {
   prepare(sql: string): D1PreparedStatement;
   batch<T = unknown>(statements: D1PreparedStatement[]): Promise<Array<D1Result<T>>>;
 };
-
-function errorMessage(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function bodyEventId(body: unknown) {
-  if (!body || typeof body !== "object") return null;
-  const value = (body as Record<string, unknown>).event_id;
-  return typeof value === "string" && value.length > 0 ? value : null;
-}
 
 function createEventId() {
   const cryptoLike = globalThis.crypto as (Crypto & { randomUUID?: () => string }) | undefined;
@@ -141,11 +129,7 @@ export function parseChatLogQueueMessage(body: unknown): ChatLogQueueMessage | n
 export async function processChatLogQueueBatch(batch: QueueBatchLike, env: QueueEnvLike) {
   const db = env.DB;
   if (!db) {
-    console.error("LOG_QUEUE consumer is missing DB binding.", {
-      queue: batch.queue,
-      message_count: batch.messages.length,
-      event_ids: batch.messages.map((message) => bodyEventId(message.body)).filter(Boolean),
-    });
+    console.error("LOG_QUEUE consumer is missing DB binding.");
     for (const message of batch.messages) {
       message.retry();
     }
@@ -157,11 +141,7 @@ export async function processChatLogQueueBatch(batch: QueueBatchLike, env: Queue
   for (const message of batch.messages) {
     const parsed = parseChatLogQueueMessage(message.body);
     if (!parsed) {
-      console.warn("Discarding invalid LOG_QUEUE message.", {
-        queue: batch.queue,
-        event_id: bodyEventId(message.body),
-        body_type: typeof message.body,
-      });
+      console.warn("Discarding invalid LOG_QUEUE message.");
       message.ack();
       continue;
     }
@@ -171,7 +151,6 @@ export async function processChatLogQueueBatch(batch: QueueBatchLike, env: Queue
   if (valid.length === 0) return;
 
   try {
-    await ensureLogsSchema(createD1LogsSchemaDatabase(db));
     const statements = valid.map((item) => createLogStatement(item.body.payload));
     const prepared = statements.map((statement) => db.prepare(statement.sql).bind(...statement.params));
     await db.batch(prepared);
@@ -179,12 +158,7 @@ export async function processChatLogQueueBatch(batch: QueueBatchLike, env: Queue
       item.message.ack();
     }
   } catch (error) {
-    console.error("Failed to write LOG_QUEUE batch.", {
-      queue: batch.queue,
-      message_count: valid.length,
-      event_ids: valid.map((item) => item.body.event_id),
-      error: errorMessage(error),
-    });
+    console.error("Failed to write LOG_QUEUE batch.", error);
     for (const item of valid) {
       item.message.retry();
     }

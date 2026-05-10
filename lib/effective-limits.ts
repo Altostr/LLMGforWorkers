@@ -22,11 +22,6 @@ function pickQuota(userVal: number | null, groupVal: number | null): number | nu
   return null;
 }
 
-export function normalizeQuotaLimit(value: number | null | undefined) {
-  if (value === null || value === undefined || value < 0) return null;
-  return value;
-}
-
 export async function getUserGroup(groupId: number | null): Promise<DbGroup | null> {
   if (groupId === null) return null;
   const group = await gatewayDb.get<DbGroup>(

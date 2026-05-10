@@ -51,6 +51,10 @@ export function setCachedProfile(profile: CachedProfile) {
   localStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
 }
 
+export function clearCachedProfile() {
+  localStorage.removeItem(PROFILE_KEY);
+}
+
 export function clearSession() {
   localStorage.removeItem(KEY);
   localStorage.removeItem(PROFILE_KEY);
