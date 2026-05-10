@@ -13,14 +13,14 @@
     "cf:configure": "node scripts/configure-cloudflare.mjs",
     "cf:typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts",
     "preview": "npm run cf:build && opennextjs-cloudflare preview",
-    "deploy": "npm run cf:build && opennextjs-cloudflare deploy",
-    "upload": "npm run cf:build && opennextjs-cloudflare upload",
+    "deploy": "npm run cf:configure && npm run cf:build && opennextjs-cloudflare deploy",
+    "upload": "npm run cf:configure && npm run cf:build && opennextjs-cloudflare upload",
     "cf-typegen": "npm run cf:typegen",
-    "d1:create": "wrangler d1 create model-gate",
-    "d1:migrate:local": "wrangler d1 migrations apply model-gate --local",
-    "d1:migrate:remote": "wrangler d1 migrations apply model-gate --remote",
-    "queues:create": "wrangler queues create model-gate-chat-logs",
-    "queues:create:dlq": "wrangler queues create model-gate-chat-logs-dlq"
+    "d1:create": "wrangler d1 create altostrapi",
+    "d1:migrate:local": "wrangler d1 migrations apply altostrapi --local",
+    "d1:migrate:remote": "wrangler d1 migrations apply altostrapi --remote",
+    "queues:create": "wrangler queues create altostrapi",
+    "queues:create:dlq": "wrangler queues create altostrapi-dlq"
   },
   "dependencies": {
     "@radix-ui/react-alert-dialog": "^1.1.15",

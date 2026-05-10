@@ -6,7 +6,16 @@ const configPath = path.join(process.cwd(), "wrangler.jsonc");
 const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
 const isGithubActions = process.env.GITHUB_ACTIONS === "true";
 const errors = [];
-const npx = process.platform === "win32" ? "npx.cmd" : "npx";
+
+function getWranglerInvocation(args) {
+  const localWrangler = path.join(process.cwd(), "node_modules", "wrangler", "bin", "wrangler.js");
+  if (fs.existsSync(localWrangler)) {
+    return { command: process.execPath, args: [localWrangler, ...args] };
+  }
+
+  const npx = process.platform === "win32" ? "npx.cmd" : "npx";
+  return { command: npx, args: ["wrangler", ...args] };
+}
 
 function value(name, fallback) {
   const raw = process.env[name];
@@ -20,7 +29,8 @@ function requireEnvInCi(name) {
 }
 
 function runWrangler(args, options = {}) {
-  const result = spawnSync(npx, ["wrangler", ...args], {
+  const invocation = getWranglerInvocation(args);
+  const result = spawnSync(invocation.command, invocation.args, {
     cwd: process.cwd(),
     env: process.env,
     encoding: "utf8",
@@ -183,10 +193,10 @@ if (errors.length > 0) {
   process.exit(1);
 }
 
-const workerName = value("CF_WORKER_NAME", config.name ?? "model-gate");
+const workerName = value("CF_WORKER_NAME", config.name ?? "api");
 const d1Database = config.d1_databases?.[0] ?? {};
-const d1DatabaseName = value("CF_D1_DATABASE_NAME", d1Database.database_name ?? "model-gate");
-const queueName = value("CF_LOG_QUEUE_NAME", config.queues?.producers?.[0]?.queue ?? "model-gate-chat-logs");
+const d1DatabaseName = value("CF_D1_DATABASE_NAME", d1Database.database_name ?? "altostrapi");
+const queueName = value("CF_LOG_QUEUE_NAME", config.queues?.producers?.[0]?.queue ?? "altostrapi");
 const dlqName = `${queueName}-dlq`;
 const d1DatabaseId = ensureD1Database(d1DatabaseName);
 

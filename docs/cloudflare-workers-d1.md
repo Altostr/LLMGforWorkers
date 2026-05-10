@@ -17,9 +17,9 @@ Configure these GitHub Actions Secrets:
 
 Configure these GitHub Actions Variables:
 
-- `CF_WORKER_NAME` (default: `model-gate`)
-- `CF_D1_DATABASE_NAME` (default: `model-gate`)
-- `CF_LOG_QUEUE_NAME` (default: `model-gate-chat-logs`)
+- `CF_WORKER_NAME` (default: `api`)
+- `CF_D1_DATABASE_NAME` (default: `altostrapi`)
+- `CF_LOG_QUEUE_NAME` (default: `altostrapi`)
 
 The workflow runs `npm run cf:configure`, which creates or reuses the D1 database and writes the resolved `database_id` into the temporary CI `wrangler.jsonc`.
 
@@ -64,7 +64,9 @@ npm run d1:migrate:remote
 npm run deploy
 ```
 
-For local manual deploy, copy the D1 `database_id` returned by `wrangler d1 create` into `wrangler.jsonc`.
+`npm run deploy` runs `npm run cf:configure` before building so the Worker, D1 database, Queue, DLQ, and `WORKER_SELF_REFERENCE` binding stay aligned. The current production D1 database is `altostrapi` (`8257a3ea-5b77-4256-aa42-b7e768873110`) and the log queue is `altostrapi`.
+
+For local manual deploys to a different account, copy the D1 `database_id` returned by `wrangler d1 create` into `wrangler.jsonc` or set `CF_D1_DATABASE_NAME` and run `npm run cf:configure`.
 
 ## Queues
 

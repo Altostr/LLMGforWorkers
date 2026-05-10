@@ -59,6 +59,8 @@ npm run d1:migrate:remote
 npm run deploy
 ```
 
+`npm run deploy` and `npm run upload` run `npm run cf:configure` first, so the Worker name, D1 database, Queue, DLQ, and `WORKER_SELF_REFERENCE` binding are refreshed before the build. The current production defaults are Worker `api`, D1 `altostrapi` (`8257a3ea-5b77-4256-aa42-b7e768873110`), and Queue `altostrapi`.
+
 ## GitHub Actions 自动部署
 
 工作流文件位于 `.github/workflows/deploy-cloudflare.yml`。
@@ -101,9 +103,9 @@ wrangler deploy
 
 | Variable | 示例 |
 | --- | --- |
-| `CF_WORKER_NAME` | `model-gate` |
-| `CF_D1_DATABASE_NAME` | `model-gate` |
-| `CF_LOG_QUEUE_NAME` | `model-gate-chat-logs` |
+| `CF_WORKER_NAME` | `api` |
+| `CF_D1_DATABASE_NAME` | `altostrapi` |
+| `CF_LOG_QUEUE_NAME` | `altostrapi` |
 
 D1 id 会由 GitHub Actions 自动创建或查询后写入临时部署配置，不需要手动配置。
 

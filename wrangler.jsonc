@@ -1,11 +1,14 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "model-gate",
+  "name": "api",
   "main": "worker.ts",
   "workers_dev": true,
   "preview_urls": true,
   "compatibility_date": "2026-05-10",
-  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "compatibility_flags": [
+    "nodejs_compat",
+    "global_fetch_strictly_public"
+  ],
   "assets": {
     "directory": ".open-next/assets",
     "binding": "ASSETS"
@@ -13,27 +16,27 @@
   "services": [
     {
       "binding": "WORKER_SELF_REFERENCE",
-      "service": "model-gate"
+      "service": "api"
     }
   ],
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "model-gate",
-      "database_id": "00000000-0000-0000-0000-000000000000"
+      "database_name": "altostrapi",
+      "database_id": "8257a3ea-5b77-4256-aa42-b7e768873110"
     }
   ],
   "queues": {
     "producers": [
       {
         "binding": "LOG_QUEUE",
-        "queue": "model-gate-chat-logs"
+        "queue": "altostrapi"
       }
     ],
     "consumers": [
       {
-        "queue": "model-gate-chat-logs",
-        "dead_letter_queue": "model-gate-chat-logs-dlq",
+        "queue": "altostrapi",
+        "dead_letter_queue": "altostrapi-dlq",
         "max_batch_size": 10,
         "max_batch_timeout": 5,
         "max_retries": 3
