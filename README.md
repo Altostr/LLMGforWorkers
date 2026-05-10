@@ -122,6 +122,13 @@ Workers 模式下，请求主路径仍同步完成认证、限流、配额扣减
 兼容 OpenAI/Anthropic 风格：
 
 ```text
+推荐 Base URL: https://your-worker.example/v1
+
+POST /v1/chat/completions
+POST /v1/responses
+POST /v1/messages
+
+兼容旧路径:
 GET  /api/v1/models
 POST /api/v1/chat/completions
 POST /api/v1/responses

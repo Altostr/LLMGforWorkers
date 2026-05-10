@@ -249,7 +249,7 @@ export default function AdminLogsPage() {
     ? "正在读取当前筛选条件下的请求记录。"
     : hasActiveFilters
       ? "当前筛选条件下没有请求记录，可以调整条件后重新查询。"
-      : "当前还没有请求日志写入。只有通过 API Key 调用 /api/v1/chat/completions、/api/v1/responses、/api/v1/messages 的请求会进入这里；如果已经调用过，请打开诊断查看 D1、Queue 和 logs 表状态。";
+      : "当前还没有请求日志写入。只有通过 API Key 调用 /v1/chat/completions、/v1/responses、/v1/messages 或兼容的 /api/v1/* 路径会进入这里；如果已经调用过，请打开诊断查看 D1、Queue 和 logs 表状态。";
   const pageWindow = (() => {
     if (totalPages <= 7) return Array.from({ length: totalPages }, (_, i) => i + 1);
     if (page <= 3) return [1, 2, 3, 4, 5];
