@@ -171,6 +171,43 @@ curl https://api.altostr.com/api/v1/models \
 AUTH_DISABLED=1 npm run dev
 ```
 
+## Wrangler Config Sync
+
+`npm run cf:configure` rewrites `wrangler.jsonc` in the current deployment workspace before build/deploy. In GitHub Actions this is temporary workspace state only; the workflow does not commit the generated config back to the repository.
+
+Required GitHub Actions Secrets:
+
+| Secret | Purpose |
+| --- | --- |
+| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare account used by Wrangler |
+| `CLOUDFLARE_API_TOKEN` | Token with Workers, D1, and Queues permissions |
+| `JWT_ACCESS_SECRET` | Access token signing secret |
+| `JWT_REFRESH_SECRET` | Refresh token signing secret |
+
+Required GitHub Actions Variables:
+
+| Variable | Example |
+| --- | --- |
+| `CF_WORKER_NAME` | `api` |
+| `CF_D1_DATABASE_NAME` | `altostrapi` |
+| `CF_LOG_QUEUE_NAME` | `altostrapi` |
+
+Optional GitHub Actions Variables:
+
+| Variable | Default source |
+| --- | --- |
+| `CF_D1_DATABASE_ID` | Auto-detected or created by `wrangler d1 list/create` |
+| `CF_WORKERS_DEV` | `wrangler.jsonc` |
+| `CF_PREVIEW_URLS` | `wrangler.jsonc` |
+| `CF_COMPATIBILITY_DATE` | `wrangler.jsonc` |
+| `CF_COMPATIBILITY_FLAGS` | `wrangler.jsonc`; accepts CSV or JSON array |
+| `CF_CUSTOM_DOMAIN_ENABLED` | Existing custom domain route in `wrangler.jsonc` |
+| `CF_CUSTOM_DOMAIN_PATTERN` | Existing custom domain route pattern |
+| `CF_CUSTOM_DOMAIN_ZONE_NAME` | Existing custom domain route zone |
+| `CF_LOG_QUEUE_MAX_BATCH_SIZE` | Existing queue consumer config or `10` |
+| `CF_LOG_QUEUE_MAX_BATCH_TIMEOUT` | Existing queue consumer config or `5` |
+| `CF_LOG_QUEUE_MAX_RETRIES` | Existing queue consumer config or `3` |
+
 ## 目录说明
 
 ```text
