@@ -1,5 +1,9 @@
 # LLMG for Workers
 
+声明：本项目移植自 [ModelGate](https://cnb.cool/Bring/Tools/ModelGate)。
+
+Notice: This project is ported from [ModelGate](https://cnb.cool/Bring/Tools/ModelGate).
+
 [中文](#中文) | [English](#english)
 
 ## 中文
