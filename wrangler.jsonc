@@ -1,16 +1,9 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "api",
+  "name": "model-gate",
   "main": "worker.ts",
   "workers_dev": true,
   "preview_urls": true,
-  "routes": [
-    {
-      "pattern": "api.altostr.com",
-      "custom_domain": true,
-      "zone_name": "altostr.com"
-    }
-  ],
   "compatibility_date": "2026-05-10",
   "compatibility_flags": [
     "nodejs_compat",
@@ -23,27 +16,27 @@
   "services": [
     {
       "binding": "WORKER_SELF_REFERENCE",
-      "service": "api"
+      "service": "model-gate"
     }
   ],
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "altostrapi",
-      "database_id": "8257a3ea-5b77-4256-aa42-b7e768873110"
+      "database_name": "model-gate",
+      "database_id": "00000000-0000-0000-0000-000000000000"
     }
   ],
   "queues": {
     "producers": [
       {
         "binding": "LOG_QUEUE",
-        "queue": "altostrapi"
+        "queue": "model-gate-chat-logs"
       }
     ],
     "consumers": [
       {
-        "queue": "altostrapi",
-        "dead_letter_queue": "altostrapi-dlq",
+        "queue": "model-gate-chat-logs",
+        "dead_letter_queue": "model-gate-chat-logs-dlq",
         "max_batch_size": 10,
         "max_batch_timeout": 5,
         "max_retries": 3
